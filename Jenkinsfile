@@ -50,7 +50,9 @@ commands = nosetests --with-xcoverage --xcoverage-file=coverage_unit.xml --cover
 [testenv:functional]
 commands = nosetests -vv --all-modules --exe test/functional
 [testenv:bandit]
-commands = bandit -r IM -f html -o bandit.html"""
+commands = 
+    - mkdir /tmp/bandit
+    - bandit -r IM -f html -o /tmp/bandit/index.html"""
     }
 
     stages {
@@ -115,7 +117,7 @@ commands = bandit -r IM -f html -o bandit.html"""
             }
             post {
                 always {
-                    HTMLReport('', 'bandit.html', 'Bandit report')
+                    HTMLReport("/tmp/bandit", 'index.html', 'Bandit report')
                 }
             }
         }
