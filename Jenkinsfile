@@ -1,6 +1,6 @@
 #!/usr/bin/groovy
 
-@Library(['github.com/indigo-dc/jenkins-pipeline-library']) _
+@Library(['github.com/indigo-dc/jenkins-pipeline-library@1.1.0']) _
 
 pipeline {
     agent {
@@ -13,8 +13,7 @@ pipeline {
         pip_test_reqs = '''bandit
 pep8
 nose
-nosexcover
-'''
+nosexcover'''
         pip_reqs = '''paramiko
 radl
 mock
@@ -64,8 +63,12 @@ commands =
 
         stage('Environment setup') {
             steps {
-                PipRequirements(pip_test_reqs, 'test-requirements.txt')
-                PipRequirements(pip_reqs, 'requirements.txt')
+                PipRequirements(
+                    utils.multilineToArray(pip_test_reqs),
+                    'test-requirements.txt')
+                PipRequirements(
+                    utils.multilineToArray(pip_reqs),
+                    'requirements.txt')
                 ToxConfig(tox_envs)
             }
             post {
@@ -170,10 +173,9 @@ commands =
             steps {
                 checkout scm
                 script {
-                    dockerhub_image_id = DockerBuild(
-                        dockerhub_repo,
-                        env.BRANCH_NAME,
-                        "docker-devel")
+                    dockerhub_image_id = DockerBuild(dockerhub_repo,
+                                                     tag: env.BRANCH_NAME,
+                                                     build_dir: "docker-devel")
                 }
             }
             post {
