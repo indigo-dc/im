@@ -30,7 +30,10 @@ except Exception as ex:
 
 from IM.connectors.LibCloud import LibCloudCloudConnector
 from IM.config import Config
-from IM.uriparse import uriparse
+try:
+    from urlparse import urlparse
+except ImportError:
+    from urllib.parse import urlparse
 from IM.VirtualMachine import VirtualMachine
 from radl.radl import Feature
 
@@ -138,7 +141,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 try:
                     import ssl
                     ssl._create_default_https_context = ssl._create_unverified_context
-                except:
+                except Exception:
                     pass
 
             kwargs = {}
@@ -207,7 +210,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         return None
 
     def concrete_system(self, radl_system, str_url, auth_data):
-        url = uriparse(str_url)
+        url = urlparse(str_url)
         protocol = url[0]
         src_host = url[1].split(':')[0]
 
@@ -229,25 +232,11 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
     def updateVMInfo(self, vm, auth_data):
         node = self.get_node_with_id(vm.id, auth_data)
         if node:
-            if node.state == NodeState.RUNNING or node.state == NodeState.REBOOTING:
-                res_state = VirtualMachine.RUNNING
-            elif node.state == NodeState.PENDING:
-                res_state = VirtualMachine.PENDING
-            elif node.state == NodeState.TERMINATED:
-                res_state = VirtualMachine.OFF
-            elif node.state == NodeState.STOPPED:
-                res_state = VirtualMachine.STOPPED
-            elif node.state == NodeState.ERROR:
-                res_state = VirtualMachine.FAILED
-            else:
-                res_state = VirtualMachine.UNKNOWN
-
-            vm.state = res_state
+            vm.state = self.VM_STATE_MAP.get(node.state, VirtualMachine.UNKNOWN)
 
             flavorId = node.extra['flavorId']
             instance_type = node.driver.ex_get_size(flavorId)
-            self.update_system_info_from_instance(
-                vm.info.systems[0], instance_type)
+            self.update_system_info_from_instance(vm.info.systems[0], instance_type)
 
             self.setIPsFromInstance(vm, node)
             self.attach_volumes(vm, node)
@@ -417,7 +406,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         Update the features of the system with the information of the instance_type
         """
         if instance_type:
-            LibCloudCloudConnector.update_system_info_from_instance(self, system, instance_type)
+            LibCloudCloudConnector.update_system_info_from_instance(system, instance_type)
             if instance_type.vcpus:
                 system.addFeature(
                     Feature("cpu.count", "=", instance_type.vcpus), conflict="me", missing="other")
@@ -579,14 +568,8 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 'ex_security_groups': sgs,
                 'name': "%s-%s" % (name, int(time.time() * 100))}
 
-        tags = {}
-        if system.getValue('instance_tags'):
-            keypairs = system.getValue('instance_tags').split(",")
-            for keypair in keypairs:
-                parts = keypair.split("=")
-                key = parts[0].strip()
-                value = parts[1].strip()
-                tags[key] = value
+        tags = self.get_instance_tags(system)
+        if tags:
             args['ex_metadata'] = tags
 
         keypair = None
@@ -894,7 +877,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                         except Exception as ex:
                             self.log_warn("Exception adding SG rules: " + str(ex))
                     else:
-                        if outport.get_remote_port() != 22:
+                        if outport.get_remote_port() != 22 or not network.isPublic():
                             try:
                                 driver.ex_create_security_group_rule(sg, outport.get_protocol(),
                                                                      outport.get_remote_port(),
@@ -954,7 +937,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             else:
                 # If this is not the last vm, we skip this step
                 self.log_info("There are active instances. Not removing the SG")
-        except:
+        except Exception:
             self.log_exception("Error deleting security groups.")
 
         return (True, "")
