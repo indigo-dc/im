@@ -50,7 +50,9 @@ commands = nosetests --with-xcoverage --xcoverage-file=coverage_unit.xml --cover
 [testenv:functional]
 commands = nosetests -vv --all-modules --exe test/functional
 [testenv:bandit]
-commands = bandit -r IM -f html -o bandit.html"""
+commands = 
+    - mkdir /tmp/bandit
+    - bandit -r IM -f html -o /tmp/bandit/index.html"""
     }
 
     stages {
@@ -115,7 +117,7 @@ commands = bandit -r IM -f html -o bandit.html"""
             }
             post {
                 always {
-                    HTMLReport('', 'bandit.html', 'Bandit report')
+                    HTMLReport("/tmp/bandit", 'index.html', 'Bandit report')
                 }
             }
         }
@@ -131,7 +133,10 @@ commands = bandit -r IM -f html -o bandit.html"""
             post {
                 always {
                     OWASPDependencyCheckPublish()
-                    HTMLReport('im', 'dependency-check-report.html', 'OWASP Dependency Report')
+                    HTMLReport(
+                        "$WORKSPACE/im/IM",
+                        'dependency-check-report.html',
+                        'OWASP Dependency Report')
                     deleteDir()
                 }
             }
@@ -196,8 +201,14 @@ commands = bandit -r IM -f html -o bandit.html"""
                     "[preview-testbed] New InfrastructureManager version ${env.BRANCH_NAME} available",
                     "Check new artifacts at:\n\t- Docker image: [${dockerhub_image_id}:${env.BRANCH_NAME}|https://hub.docker.com/r/${dockerhub_image_id}/tags/]",
                     ['wp3', 'preview-testbed', "IM-${env.BRANCH_NAME}"],
-		    'Task',
-		    'mariojmdavid'
+                    'Task',
+                    'mariojmdavid',
+                    ['wgcastell',
+                     'vkozlov',
+                     'dlugo',
+                     'keiichiito',
+                     'laralloret',
+                     'ignacioheredia']
                 )
             }
         }
