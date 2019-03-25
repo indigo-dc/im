@@ -82,7 +82,7 @@ configure win (
   - tasks:
       - name: Touch a file (creates if not present, updates modification time if present)
         win_file:
-          path: C:\Temp\foo.conf
+          path: C:\foo.conf
           state: touch
 
 @end
