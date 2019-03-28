@@ -23,7 +23,10 @@ from uuid import uuid1
 from netaddr import IPNetwork, IPAddress
 
 from IM.config import Config
-from IM.uriparse import uriparse
+try:
+    from urlparse import urlparse
+except ImportError:
+    from urllib.parse import urlparse
 from IM.VirtualMachine import VirtualMachine
 from .CloudConnector import CloudConnector
 from radl.radl import Feature
@@ -160,7 +163,7 @@ class FogBowCloudConnector(CloudConnector):
         return auth_headers
 
     def concrete_system(self, radl_system, str_url, auth_data):
-        url = uriparse(str_url)
+        url = urlparse(str_url)
         protocol = url[0]
         src_host = url[1].split(':')[0]
 
@@ -204,11 +207,16 @@ class FogBowCloudConnector(CloudConnector):
                         net.setValue("provider_id", fbw_fed_nets[net_name])
                 else:
                     self.log_info("Creating federated net %s." % net_name)
-                    cidr = '10.0.%d.0/24' % random.randint(10, 250)
+                    cidr = net.getValue("cidr")
+                    if not cidr:
+                        cidr = '10.0.%d.0/24' % random.randint(10, 250)
                     body = {"name": net_name, "cidrNotation": cidr}
                     net_providers = net.getValue("providers")
                     if net_providers:
-                        body["allowedMembers"] = net_providers
+                        if isinstance(net_providers, list):
+                            body["allowedMembers"] = net_providers
+                        else:
+                            body["allowedMembers"] = [a.strip() for a in net_providers.split(",")]
                     self.log_debug(body)
                     net_info = self.post_and_get('/federatedNetworks/', json.dumps(body), auth_data,
                                                  ['FAILED_AFTER_SUCCESSUL_REQUEST', 'FAILED_ON_REQUEST'])

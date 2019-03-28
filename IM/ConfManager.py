@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import copy
 import json
 import logging
 import os
@@ -22,7 +21,6 @@ import threading
 import time
 import tempfile
 import shutil
-import yaml
 from distutils.version import LooseVersion
 
 try:
@@ -47,10 +45,11 @@ except ImportError:
     # for Ansible version 2.3.2 or lower
     pass
 
+from IM.ansible_utils import merge_recipes
 from IM.ansible_utils.ansible_launcher import AnsibleThread
 
-import IM.InfrastructureManager
 import IM.InfrastructureList
+from IM.LoggerMixin import LoggerMixin
 from IM.VirtualMachine import VirtualMachine
 from IM.SSH import AuthenticationException
 from IM.SSHRetry import SSHRetry
@@ -59,7 +58,7 @@ from IM.config import Config
 from radl.radl import system, contextualize_item
 
 
-class ConfManager(threading.Thread):
+class ConfManager(LoggerMixin, threading.Thread):
     """
     Class to manage the contextualization steps
     """
@@ -674,7 +673,7 @@ class ConfManager(threading.Thread):
 
             # If there are a recipe, use it
             if recipe:
-                conf_content = self.mergeYAML(conf_content, recipe)
+                conf_content = merge_recipes(conf_content, recipe)
                 conf_content += "\n\n"
             else:
                 # use the app name as the package to install
@@ -691,7 +690,7 @@ class ConfManager(threading.Thread):
                 install_app += "    action: yum pkg=" + short_app_name + " state=installed\n"
                 install_app += "    when: \"ansible_os_family == 'RedHat'\"\n"
                 install_app += "    ignore_errors: yes\n"
-                conf_content = self.mergeYAML(conf_content, install_app)
+                conf_content = merge_recipes(conf_content, install_app)
 
         conf_out.write(conf_content)
         conf_out.close()
@@ -737,10 +736,10 @@ class ConfManager(threading.Thread):
                     recipes = vault_edit.vault.decrypt(configure.recipes.strip())
                 else:
                     recipes = configure.recipes
-                conf_content = self.mergeYAML(conf_content, recipes)
+                conf_content = merge_recipes(conf_content, recipes)
                 conf_content = vault_edit.vault.encrypt(conf_content)
             else:
-                conf_content = self.mergeYAML(conf_content, configure.recipes)
+                conf_content = merge_recipes(conf_content, configure.recipes)
 
             conf_out = open(conf_filename, 'w')
             conf_out.write(conf_content)
@@ -803,6 +802,7 @@ class ConfManager(threading.Thread):
                         remote_dir = Config.REMOTE_CONF_DIR + "/" + str(self.inf.id) + "/"
                         self.log_info("Copy the contextualization agent files")
                         files = []
+                        files.append((Config.IM_PATH + "/CtxtAgentBase.py", remote_dir + "/IM/CtxtAgentBase.py"))
                         files.append((Config.IM_PATH + "/SSH.py", remote_dir + "/IM/SSH.py"))
                         files.append((Config.IM_PATH + "/SSHRetry.py", remote_dir + "/IM/SSHRetry.py"))
                         files.append((Config.IM_PATH + "/retry.py", remote_dir + "/IM/retry.py"))
@@ -819,6 +819,7 @@ class ConfManager(threading.Thread):
                             for ansible_host in self.inf.radl.ansible_hosts:
                                 (user, passwd, private_key) = ansible_host.getCredentialValues()
                                 ssh = SSHRetry(ansible_host.getHost(), user, passwd, private_key)
+                                ssh.sftp_mkdir(Config.REMOTE_CONF_DIR, 0o755)
                                 ssh.sftp_mkdir(remote_dir, 0o700)
                                 ssh.sftp_mkdir(remote_dir + "/IM")
                                 ssh.sftp_put_files(files)
@@ -1370,7 +1371,10 @@ class ConfManager(threading.Thread):
             for req_app in s.getApplications():
                 if req_app.getValue("name").startswith("ansible.modules."):
                     # Get the modules specified by the user in the RADL
-                    modules.append(req_app.getValue("name")[16:])
+                    app_name = req_app.getValue("name")[16:]
+                    if req_app.getValue("version"):
+                        app_name += ",%s" % req_app.getValue("version")
+                    modules.append(app_name)
                 else:
                     # Get the info about the apps from the recipes DB
                     vm_modules, _ = Recipe.getInfoApps([req_app])
@@ -1456,76 +1460,3 @@ class ConfManager(threading.Thread):
         self.log_debug("Ctxt agent vm configuration file: " + json.dumps(conf_data))
         json.dump(conf_data, conf_out, indent=2)
         conf_out.close()
-
-    def mergeYAML(self, yaml1, yaml2):
-        """
-        Merge two ansible yaml docs
-
-        Arguments:
-           - yaml1(str): string with the first YAML
-           - yaml1(str): string with the second YAML
-        Returns: The merged YAML. In case of errors, it concatenates both strings
-        """
-        yamlo1o = {}
-        try:
-            yamlo1o = yaml.safe_load(yaml1)[0]
-            if not isinstance(yamlo1o, dict):
-                yamlo1o = {}
-        except Exception:
-            self.log_exception("Error parsing YAML: " + yaml1 + "\n Ignore it")
-
-        try:
-            yamlo2s = yaml.safe_load(yaml2)
-            if not isinstance(yamlo2s, list) or any([not isinstance(d, dict) for d in yamlo2s]):
-                yamlo2s = {}
-        except Exception:
-            self.log_exception("Error parsing YAML: " + yaml2 + "\n Ignore it")
-            yamlo2s = {}
-
-        if not yamlo2s and not yamlo1o:
-            return ""
-
-        result = []
-        for yamlo2 in yamlo2s:
-            yamlo1 = copy.deepcopy(yamlo1o)
-            all_keys = []
-            all_keys.extend(yamlo1.keys())
-            all_keys.extend(yamlo2.keys())
-            all_keys = set(all_keys)
-
-            for key in all_keys:
-                if key in yamlo1 and yamlo1[key]:
-                    if key in yamlo2 and yamlo2[key]:
-                        if isinstance(yamlo1[key], dict):
-                            yamlo1[key].update(yamlo2[key])
-                        elif isinstance(yamlo1[key], list):
-                            yamlo1[key].extend(yamlo2[key])
-                        else:
-                            # Both use have the same key with merge in a lists
-                            v1 = yamlo1[key]
-                            v2 = yamlo2[key]
-                            yamlo1[key] = [v1, v2]
-                elif key in yamlo2 and yamlo2[key]:
-                    yamlo1[key] = yamlo2[key]
-            result.append(yamlo1)
-
-        return yaml.safe_dump(result, default_flow_style=False, explicit_start=True, width=256)
-
-    def log_msg(self, level, msg, exc_info=0):
-        msg = "Inf ID: %s: %s" % (self.inf.id, msg)
-        self.logger.log(level, msg, exc_info=exc_info)
-
-    def log_error(self, msg):
-        self.log_msg(logging.ERROR, msg)
-
-    def log_debug(self, msg):
-        self.log_msg(logging.DEBUG, msg)
-
-    def log_warn(self, msg):
-        self.log_msg(logging.WARNING, msg)
-
-    def log_exception(self, msg):
-        self.log_msg(logging.ERROR, msg, exc_info=1)
-
-    def log_info(self, msg):
-        self.log_msg(logging.INFO, msg)

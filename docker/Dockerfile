@@ -1,7 +1,7 @@
 # Dockerfile to create a container with the IM service and TOSCA support
 FROM ubuntu:16.04
 MAINTAINER Miguel Caballer <micafer1@upv.es>
-LABEL version="1.8.1"
+LABEL version="1.8.2"
 LABEL description="Container image to run the IM service with TOSCA support. (http://www.grycap.upv.es/im)"
 
 # Install Ansible
@@ -22,25 +22,19 @@ RUN wget https://launchpad.net/ubuntu/+archive/primary/+files/python-msrest_0.4.
     rm -rf /var/lib/apt/lists/*
 
 # Install IM
-RUN wget https://github.com/grycap/RADL/releases/download/v1.1.2/python-radl_1.1.2-1_all.deb && \ 
-    wget https://github.com/indigo-dc/im/releases/download/v1.8.1/python-im_1.8.1-1_all.deb && \
+RUN wget https://github.com/grycap/RADL/releases/download/v1.1.3/python-radl_1.1.3-1_all.deb && \ 
+    wget https://github.com/indigo-dc/im/releases/download/v1.8.2/python-im_1.8.2-1_all.deb && \
     wget https://github.com/indigo-dc/tosca-parser/releases/download/1.1.1/python-tosca-parser_1.1.1-1_all.deb && \
     dpkg -i python-radl_*_all.deb ; \
     dpkg -i python-tosca-parser_*_all.deb ; \
     dpkg -i python-im_*_all.deb ; \
     rm *.deb && \
     apt update && apt install -f -y && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && rm -rf ~/.cache/ && \
+    dpkg -r --force-depends python-libcloud
 
-# Install last PIP version of libcloud
-RUN apt-get update && apt-get install --no-install-recommends -y python-pip && \
-     pip install apache-libcloud && \
-     apt-get purge -y python-pip && \
-     apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && rm -rf ~/.cache/ && \
-     dpkg -r --force-depends python-libcloud
-
-#RUN easy_install -U cheroot apache-libcloud
-RUN easy_install -U cheroot
+RUN easy_install -U apache-libcloud
+RUN easy_install -U cheroot==6.5.2
 
 # Expose the IM ports
 EXPOSE 8899 8800

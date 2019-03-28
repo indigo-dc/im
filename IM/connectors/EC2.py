@@ -29,7 +29,10 @@ except Exception as ex:
     print("WARN: Boto library not correctly installed. EC2CloudConnector will not work!.")
     print(ex)
 
-from IM.uriparse import uriparse
+try:
+    from urlparse import urlparse
+except ImportError:
+    from urllib.parse import urlparse
 from IM.VirtualMachine import VirtualMachine
 from .CloudConnector import CloudConnector
 from radl.radl import Feature
@@ -101,7 +104,7 @@ class EC2CloudConnector(CloudConnector):
         CloudConnector.__init__(self, cloud_info, inf)
 
     def concrete_system(self, radl_system, str_url, auth_data):
-        url = uriparse(str_url)
+        url = urlparse(str_url)
         protocol = url[0]
 
         if protocol == "aws":
@@ -242,8 +245,8 @@ class EC2CloudConnector(CloudConnector):
            - path(str): URL of a VMI (some like this: aws://eu-west-1/ami-00685b74)
         Returns: a tuple (region, ami) with the region and the AMI ID
         """
-        region = uriparse(path)[1]
-        ami = uriparse(path)[2][1:]
+        region = urlparse(path)[1]
+        ami = urlparse(path)[2][1:]
 
         return (region, ami)
 
@@ -445,7 +448,7 @@ class EC2CloudConnector(CloudConnector):
                             except Exception as addex:
                                 self.log_warn("Exception adding SG rules. Probably the rules exists:" + str(addex))
                         else:
-                            if outport.get_remote_port() != 22:
+                            if outport.get_remote_port() != 22 or not network.isPublic():
                                 try:
                                     sg.authorize(outport.get_protocol(), outport.get_remote_port(),
                                                  outport.get_remote_port(), '0.0.0.0/0')
@@ -598,14 +601,7 @@ class EC2CloudConnector(CloudConnector):
                     res.append((False, "Error managing the keypair."))
                 return res
 
-            tags = {}
-            if system.getValue('instance_tags'):
-                keypairs = system.getValue('instance_tags').split(",")
-                for keypair in keypairs:
-                    parts = keypair.split("=")
-                    key = parts[0].strip()
-                    value = parts[1].strip()
-                    tags[key] = value
+            tags = self.get_instance_tags(system)
 
             all_failed = True
 
@@ -897,8 +893,8 @@ class EC2CloudConnector(CloudConnector):
 
             reservations = conn.get_all_instances([instance_id])
             instance = reservations[0].instances[0]
-        except:
-            pass
+        except Exception:
+            self.log_error("Error getting instance id: %s" % instance_id)
 
         return instance
 
@@ -1064,11 +1060,6 @@ class EC2CloudConnector(CloudConnector):
         region = vm.id.split(";")[0]
         instance_id = vm.id.split(";")[1]
 
-        try:
-            conn = self.get_connection(region, auth_data)
-        except:
-            pass
-
         # Check if the instance_id starts with "sir" -> spot request
         if (instance_id[0] == "s"):
             # Check if the request has been fulfilled and the instance has been
@@ -1077,6 +1068,7 @@ class EC2CloudConnector(CloudConnector):
 
             self.log_info("Check if the request has been fulfilled and the instance has been deployed")
             job_sir_id = instance_id
+            conn = self.get_connection(region, auth_data)
             request_list = conn.get_all_spot_instance_requests()
             for sir in request_list:
                 # TODO: Check if the request had failed and launch it in
@@ -1268,7 +1260,7 @@ class EC2CloudConnector(CloudConnector):
         if last:
             try:
                 self.delete_security_groups(conn, vm)
-            except:
+            except Exception:
                 self.log_exception("Error deleting security group.")
 
         public_key = vm.getRequestedSystem().getValue('disk.0.os.credentials.public_key')
@@ -1277,31 +1269,31 @@ class EC2CloudConnector(CloudConnector):
             try:
                 # only delete in case of the user do not specify the keypair name
                 conn.delete_key_pair(vm.keypair_name)
-            except:
+            except Exception:
                 self.log_exception("Error deleting keypair.")
 
         # Delete the DNS entries
         try:
             self.del_dns_entries(vm, auth_data)
-        except:
+        except Exception:
             self.log_exception("Error deleting DNS entries")
 
         # Delete the elastic IPs
         try:
             self.delete_elastic_ips(conn, vm)
-        except:
+        except Exception:
             self.log_exception("Error deleting elastic IPs.")
 
         # Delete the  spot instance requests
         try:
             self.cancel_spot_requests(conn, vm)
-        except:
+        except Exception:
             self.log_exception("Error canceling spot requests.")
 
         # Delete the EBS volumes
         try:
             self.delete_volumes(conn, volumes, instance_id)
-        except:
+        except Exception:
             self.log_exception("Error deleting EBS volumes")
 
         return (True, "")

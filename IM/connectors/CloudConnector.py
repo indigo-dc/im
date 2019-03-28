@@ -6,9 +6,10 @@ import time
 import yaml
 from radl.radl import Feature
 from IM.config import Config
+from IM.LoggerMixin import LoggerMixin
 
 
-class CloudConnector:
+class CloudConnector(LoggerMixin):
     """
     Base class to all the Cloud connectors
 
@@ -359,7 +360,7 @@ class CloudConnector:
                 cloud_config = yaml.safe_load(radl.get_configure_by_name(configure_name).recipes)
                 if not isinstance(cloud_config, dict):
                     # The cloud_init data is a shell script
-                    cloud_config = radl.get_configure_by_name(configure_name).recipes
+                    cloud_config = radl.get_configure_by_name(configure_name).recipes.strip()
                     self.log_debug(cloud_config)
                     return cloud_config
 
@@ -394,21 +395,14 @@ class CloudConnector:
         else:
             return None
 
-    def log_msg(self, level, msg, exc_info=0):
-        msg = "Inf ID: %s: %s" % (self.inf.id, msg)
-        self.logger.log(level, msg, exc_info=exc_info)
-
-    def log_error(self, msg):
-        self.log_msg(logging.ERROR, msg)
-
-    def log_debug(self, msg):
-        self.log_msg(logging.DEBUG, msg)
-
-    def log_warn(self, msg):
-        self.log_msg(logging.WARNING, msg)
-
-    def log_exception(self, msg):
-        self.log_msg(logging.ERROR, msg, exc_info=1)
-
-    def log_info(self, msg):
-        self.log_msg(logging.INFO, msg)
+    @staticmethod
+    def get_instance_tags(system):
+        tags = {}
+        if system.getValue('instance_tags'):
+            keypairs = system.getValue('instance_tags').split(",")
+            for keypair in keypairs:
+                parts = keypair.split("=")
+                key = parts[0].strip()
+                value = parts[1].strip()
+                tags[key] = value
+        return tags
