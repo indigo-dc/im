@@ -125,6 +125,7 @@ commands =
             }
         }
 
+/*
         stage('Dependency check') {
             agent {
                 label 'docker-build'
@@ -144,7 +145,7 @@ commands =
                 }
             }
         }
-
+*/
         stage('Metrics gathering') {
             agent {
                 label 'sloc'
