@@ -1,6 +1,6 @@
 #!/usr/bin/groovy
 
-@Library(['github.com/indigo-dc/jenkins-pipeline-library@1.1.0']) _
+@Library(['github.com/indigo-dc/jenkins-pipeline-library@1.3.2']) _
 
 pipeline {
     agent {
@@ -125,6 +125,7 @@ commands =
             }
         }
 
+/*
         stage('Dependency check') {
             agent {
                 label 'docker-build'
@@ -144,7 +145,7 @@ commands =
                 }
             }
         }
-
+*/
         stage('Metrics gathering') {
             agent {
                 label 'sloc'
