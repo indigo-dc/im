@@ -59,6 +59,7 @@
 
     - command: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add -
       when: indigo_apt_key is failed
+      warn: false
 
     - name: Ubuntu 14 install indigo 1 repo
       apt: deb=https://repo.indigo-datacloud.eu/repository/indigo/1/ubuntu/dists/trusty-updates/main/binary-amd64/indigodc-release_1.0.0-2_amd64.deb
