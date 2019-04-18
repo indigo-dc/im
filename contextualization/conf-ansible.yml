@@ -52,11 +52,11 @@
       apt: name=python-pip,python-jinja2,sshpass,openssh-client,unzip
       when: ansible_distribution == "Ubuntu"
 
-    - apt_key: url=http://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
+    - apt_key: url=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
       when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
 
     - name: Ubuntu 14 install indigo 1 repo
-      apt: deb=http://repo.indigo-datacloud.eu/repository/indigo/1/ubuntu/dists/trusty/main/binary-amd64/indigodc-release_1.0.0-1_amd64.deb
+      apt: deb=https://repo.indigo-datacloud.eu/repository/indigo/1/ubuntu/dists/trusty-updates/main/binary-amd64/indigodc-release_1.0.0-2_amd64.deb
       when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
       ignore_errors: yes
 
@@ -80,11 +80,12 @@
       apt: name=ansible force=yes
       when: ansible_distribution == "Ubuntu"
 
-    - rpm_key: state=present key=http://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc
+    - name: Add RH repo key
+      rpm_key: state=present key=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc
       when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 7 and ansible_distribution != "Fedora"
 
     - name: RH indigo repos
-      yum: state=present name=http://repo.indigo-datacloud.eu/repository/indigo/2/centos7/x86_64/base/indigodc-release-2.0.0-1.el7.centos.noarch.rpm
+      yum: state=present name=https://repo.indigo-datacloud.eu/repository/indigo/2/centos7/x86_64/base/indigodc-release-2.0.0-1.el7.centos.noarch.rpm
       when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 7 and ansible_distribution != "Fedora"
         
     - name: RH7 install Ansible with yum
