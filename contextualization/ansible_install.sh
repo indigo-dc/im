@@ -71,14 +71,14 @@ else
             apt-get update
             apt-get -y install software-properties-common wget sudo
             apt-add-repository -y ppa:ansible/ansible
-            wget -q -O - http://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add -
+            wget -q -O - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add -
             case $(distribution_major_version) in
                 14)
-                    wget http://repo.indigo-datacloud.eu/repository/indigo/1/ubuntu/dists/trusty/main/binary-amd64/indigodc-release_1.0.0-1_amd64.deb
-                    dpkg -i indigodc-release_1.0.0-1_amd64.deb
+                    wget https://repo.indigo-datacloud.eu/repository/indigo/1/ubuntu/dists/trusty-updates/main/binary-amd64/indigodc-release_1.0.0-2_amd64.deb
+                    dpkg -i indigodc-release_1.0.0-2_amd64.deb
                     ;;
                 16)
-                    wget http://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
+                    wget https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
                     dpkg -i indigodc-release_2.0.0-1_amd64.deb
                     ;;
             esac
@@ -91,7 +91,7 @@ else
             ;;
         centos)
             yum install -y epel-release wget
-            yum install -y http://repo.indigo-datacloud.eu/repository/indigo/2/centos7/x86_64/base/indigodc-release-2.0.0-1.el7.centos.noarch.rpm
+            yum install -y https://repo.indigo-datacloud.eu/repository/indigo/2/centos7/x86_64/base/indigodc-release-2.0.0-1.el7.centos.noarch.rpm
             yum install -y ansible
             ;;
         fedora)
