@@ -2,7 +2,7 @@
 FROM ubuntu:18.04
 LABEL maintainer="Miguel Caballer <micafer1@upv.es>"
 LABEL version="1.8.2"
-LABEL description="Container image to run the IM service. (http://www.grycap.upv.es/im)"
+LABEL description="Container image to run the IM service with TOSCA support. (http://www.grycap.upv.es/im)"
 EXPOSE 8899 8800
 
 # Ensure system is up to date with mandatory python packages installed
