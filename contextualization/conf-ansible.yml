@@ -57,7 +57,7 @@
       ignore_errors: yes
       register: indigo_apt_key
 
-    - command: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - warn=false
+    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - warn=false
       when: indigo_apt_key is failed
 
     - name: Ubuntu 14 install indigo 1 repo
