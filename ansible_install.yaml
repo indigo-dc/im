@@ -20,16 +20,17 @@
       apt: name=python-pip,python-jinja2,sshpass,openssh-client,unzip,python-mysqldb,python-sqlite update_cache=yes
       when: ansible_distribution == "Ubuntu"
 
-    - name: Ubuntu 14 install indigo 1 repo
-      apt: deb=https://repo.indigo-datacloud.eu/repository/indigo/1/ubuntu/dists/trusty-updates/main/binary-amd64/indigodc-release_1.0.0-2_amd64.deb
-      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version == "14"
-
-    - name: Ubuntu 16 install indigo 2 repo
-      apt: deb=https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
-      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version == "16"
-
     - apt_key: url=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
-      when: ansible_distribution == "Ubuntu"
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
+      ignore_errors: yes
+      register: indigo_apt_key
+
+    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - warn=false
+      when: indigo_apt_key is failed
+
+    - name: Ubuntu install indigo 2 repo
+      apt: deb=https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
       
     - name: Apt-get update
       apt: update_cache=yes
