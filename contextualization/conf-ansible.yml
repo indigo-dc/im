@@ -52,23 +52,40 @@
       apt: name=python-pip,python-jinja2,sshpass,openssh-client,unzip
       when: ansible_distribution == "Ubuntu"
 
-    - apt_key: url=http://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
-      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
-
-    - name: Ubuntu 14 install indigo 1 repo
-      apt: deb=http://repo.indigo-datacloud.eu/repository/indigo/1/ubuntu/dists/trusty/main/binary-amd64/indigodc-release_1.0.0-1_amd64.deb
-      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
-      ignore_errors: yes
-
     - name: Install requirements Ubuntu 14
       apt: name=gcc,python-dev,libffi-dev,libssl-dev
       when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int <= 14
 
-    - name: Ubuntu install requirements
+    - get_url:
+        url: https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
+        dest: /var/tmp/indigodc-release_2.0.0-1_amd64.deb
+        validate_certs: no
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
+
+    - name: Ubuntu install indigo 2 repo
+      apt: deb=/var/tmp/indigodc-release_2.0.0-1_amd64.deb
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
+
+    - name: Remove /etc/apt/trusted.gpg.d/indigo-dc
+      file: path=/etc/apt/trusted.gpg.d/indigo-dc state=absent
+
+    - apt_key: url=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
+      ignore_errors: yes
+      register: indigo_apt_key
+
+    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - && apt-key update warn=false
+      when: indigo_apt_key is failed
+
+    - name: Ubuntu apt update
+      apt: update_cache=yes
+      when: ansible_distribution == "Ubuntu"
+
+    - name: Debian install requirements
       apt: name=software-properties-common
       when: ansible_os_family == "Debian" and (ansible_distribution != "Ubuntu" or (ansible_distribution_major_version != "14" and ansible_distribution_major_version != "16"))
         
-    - name: Ubuntu install Ansible PPA repo  
+    - name: Debian install Ansible PPA repo  
       apt_repository: repo='ppa:ansible/ansible'
       when: ansible_os_family == "Debian" and (ansible_distribution != "Ubuntu" or (ansible_distribution_major_version != "14" and ansible_distribution_major_version != "16"))
         
@@ -80,11 +97,12 @@
       apt: name=ansible force=yes
       when: ansible_distribution == "Ubuntu"
 
-    - rpm_key: state=present key=http://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc
+    - name: Add RH repo key
+      rpm_key: state=present key=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc
       when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 7 and ansible_distribution != "Fedora"
 
     - name: RH indigo repos
-      yum: state=present name=http://repo.indigo-datacloud.eu/repository/indigo/2/centos7/x86_64/base/indigodc-release-2.0.0-1.el7.centos.noarch.rpm
+      yum: state=present name=https://repo.indigo-datacloud.eu/repository/indigo/2/centos7/x86_64/base/indigodc-release-2.0.0-1.el7.centos.noarch.rpm
       when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 7 and ansible_distribution != "Fedora"
         
     - name: RH7 install Ansible with yum

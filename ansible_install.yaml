@@ -20,16 +20,17 @@
       apt: name=python-pip,python-jinja2,sshpass,openssh-client,unzip,python-mysqldb,python-sqlite update_cache=yes
       when: ansible_distribution == "Ubuntu"
 
-    - name: Ubuntu 14 install indigo 1 list
-      get_url: url=http://repo.indigo-datacloud.eu/repos/1/indigo1-ubuntu14_04.list dest=/etc/apt/sources.list.d/indigo1-ubuntu14_04.list
-      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version == "14"
+    - apt_key: url=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
+      ignore_errors: yes
+      register: indigo_apt_key
 
-    - name: Ubuntu 16 install indigo 2 list
-      get_url: url=http://repo.indigo-datacloud.eu/repos/2/indigo2-ubuntu16_04.list dest=/etc/apt/sources.list.d/indigo2-ubuntu16_04.list
-      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version == "16"
+    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - warn=false
+      when: indigo_apt_key is failed
 
-    - apt_key: url=http://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
-      when: ansible_distribution == "Ubuntu"
+    - name: Ubuntu install indigo 2 repo
+      apt: deb=https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
       
     - name: Apt-get update
       apt: update_cache=yes
@@ -40,10 +41,10 @@
       when: ansible_distribution == "Ubuntu"
       
     - name: RH indigo repos
-      get_url: url=http://repo.indigo-datacloud.eu/repos/2/indigo2.repo dest=/etc/yum.repos.d/indigo2.repo
+      yum: state=present name=https://repo.indigo-datacloud.eu/repository/indigo/2/centos7/x86_64/base/indigodc-release-2.0.0-1.el7.centos.noarch.rpm
       when: ansible_os_family == "RedHat"
 
-    - rpm_key: state=present key=http://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc
+    - rpm_key: state=present key=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc
       when: ansible_os_family == "RedHat"
 
     - name: RH7 install Ansible with yum

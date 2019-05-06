@@ -68,7 +68,7 @@ The IM provides a script to install the IM in one single step (using pip).
 You only need to execute the following command:
 
 ```sh
-$ wget -qO- https://raw.githubusercontent.com/indigodatacloud/im/master/install.sh | bash
+$ wget -qO- https://raw.githubusercontent.com/indigo-dc/im/master/install.sh | bash
 ```
 
 It works for the most recent version of the main Linux distributions (RHEL, CentOS, Fedora, Ubuntu, Debian).
