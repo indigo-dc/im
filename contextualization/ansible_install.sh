@@ -69,12 +69,11 @@ else
             ;;
         ubuntu)
             apt-get update
-            apt-get -y install software-properties-common wget sudo --force-yes
-            apt-add-repository -y ppa:ansible/ansible
-            wget -q -O - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add -
-            apt-key update
+            apt-get -y install apt-transport-https wget sudo --force-yes
             wget https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
             dpkg -i indigodc-release_2.0.0-1_amd64.deb
+            rm -f /etc/apt/trusted.gpg.d/indigo-dc
+            wget -q -O - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add -
             apt-get update
             apt-get -y install ansible --force-yes
             ;;

@@ -56,14 +56,6 @@
       apt: name=gcc,python-dev,libffi-dev,libssl-dev
       when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int <= 14
 
-    - apt_key: url=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
-      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
-      ignore_errors: yes
-      register: indigo_apt_key
-
-    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - && apt-key update warn=false
-      when: indigo_apt_key is failed
-
     - get_url:
         url: https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
         dest: /var/tmp/indigodc-release_2.0.0-1_amd64.deb
@@ -73,6 +65,17 @@
     - name: Ubuntu install indigo 2 repo
       apt: deb=/var/tmp/indigodc-release_2.0.0-1_amd64.deb
       when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
+
+    - name: Remove /etc/apt/trusted.gpg.d/indigo-dc
+      file: path=/etc/apt/trusted.gpg.d/indigo-dc state=absent
+
+    - apt_key: url=https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc state=present
+      when: ansible_distribution == "Ubuntu" and ansible_distribution_major_version|int >= 14
+      ignore_errors: yes
+      register: indigo_apt_key
+
+    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - && apt-key update warn=false
+      when: indigo_apt_key is failed
 
     - name: Ubuntu apt update
       apt: update_cache=yes
