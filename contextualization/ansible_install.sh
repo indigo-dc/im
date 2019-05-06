@@ -69,13 +69,13 @@ else
             ;;
         ubuntu)
             apt-get update
-            apt-get -y install apt-transport-https wget sudo --force-yes
+            apt-get -y install apt-transport-https wget sudo
             wget https://repo.indigo-datacloud.eu/repository/indigo/2/ubuntu/dists/xenial/main/binary-amd64/indigodc-release_2.0.0-1_amd64.deb
             dpkg -i indigodc-release_2.0.0-1_amd64.deb
             rm -f /etc/apt/trusted.gpg.d/indigo-dc
             wget -q -O - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add -
             apt-get update
-            apt-get -y install ansible --force-yes
+            apt-get -y install ansible
             ;;
         rhel)
             yum install -y http://dl.fedoraproject.org/pub/epel/epel-release-latest-$(distribution_major_version).noarch.rpm
