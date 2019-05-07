@@ -74,7 +74,7 @@
       ignore_errors: yes
       register: indigo_apt_key
 
-    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - && apt-key update warn=false
+    - shell: wget -qO - https://repo.indigo-datacloud.eu/repository/RPM-GPG-KEY-indigodc | sudo apt-key add - warn=false
       when: indigo_apt_key is failed
 
     - name: Ubuntu apt update
