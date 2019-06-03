@@ -130,6 +130,46 @@ class ConfManager(LoggerMixin, threading.Thread):
             self.log_info("Stopping pending Ansible process.")
             self.ansible_process.terminate()
 
+    def wait_all_vm_ips(self, timeout=Config.WAIT_RUNNING_VM_TIMEOUT):
+        """
+        Assure that all the VMs of the Inf. have all the requested Ips
+        """
+        wait = 0
+        success = False
+        while not success and wait < timeout and not self._stop_thread:
+            success = True
+            for vm in self.inf.get_vm_list():
+
+                # If the VM is not in a "running" state, ignore it
+                if vm.state in VirtualMachine.NOT_RUNNING_STATES:
+                    self.log_warn("The VM ID: " + str(vm.id) +
+                                  " is not running, do not wait it to have an IP.")
+                    continue
+
+                i = 0
+                all_ips = True
+                while vm.info.systems[0].hasFeature("net_interface.%d.connection" % i):
+                    if not vm.info.systems[0].getValue("net_interface.%d.ip" % i):
+                        all_ips = False
+                        break
+                    i += 1
+
+                if not all_ips:
+                    success = False
+                    vm.update_status(self.auth)
+
+            if not success:
+                self.log_warn("Still waiting all the VMs to have all the requested IPs")
+                wait += Config.CONFMAMAGER_CHECK_STATE_INTERVAL
+                time.sleep(Config.CONFMAMAGER_CHECK_STATE_INTERVAL)
+
+        if not success:
+            self.log_warn("Error waiting all the VMs to have all the requested IPs")
+        else:
+            self.log_info("All the VMs have all the requested IPs")
+
+        return success
+
     def check_vm_ips(self, timeout=Config.WAIT_RUNNING_VM_TIMEOUT):
 
         wait = 0
