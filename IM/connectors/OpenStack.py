@@ -766,7 +766,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
                         is_private = any([IPAddress(floating_ip.ip_address) in IPNetwork(mask)
                                           for mask in Config.PRIVATE_NET_MASKS])
-    
+
                         if is_private:
                             self.log_error("Error getting a Floating IP from pool %s. The IP is private." % pool_name)
                             self.log_info("We have created it, so release it.")
