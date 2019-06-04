@@ -737,13 +737,13 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
         Arguments:
            - vm(:py:class:`IM.VirtualMachine`): VM information.
-           - node(:py:class:`libcloud.compute.base.Node`): node object to attach the volumes.
+           - node(:py:class:`libcloud.compute.base.Node`): node object to attach the ip.
            - fixed_ip(str, optional): specifies a fixed IP to add to the instance.
            - pool_name(str, optional): specifies a pool to get the elastic IP
         Returns: a :py:class:`OpenStack_1_1_FloatingIpAddress` added or None if some problem occur.
         """
         try:
-            self.log_info("Add an Floating IP")
+            self.log_info("Add a Floating IP")
 
             pool = self.get_ip_pool(node.driver, pool_name)
             if not pool:
@@ -760,27 +760,20 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 else:
                     # First try to check if there is a Float IP free to attach to the node
                     found, floating_ip = self.get_floating_ip(pool)
-                    if found:
-                        try:
-                            node.driver.ex_attach_floating_ip_to_node(node, floating_ip)
-                        except Exception as atex:
-                            self.log_warn("Error attaching a found Floating IP to the node. "
-                                          "Create a new one (%s)." % str(atex))
-                    else:
-                        self.log_debug(floating_ip)
+                    if not found:
+                        # Now create a Float IP
+                        floating_ip = pool.create_floating_ip()
 
-                    # Now create a Float IP
-                    floating_ip = pool.create_floating_ip()
+                        is_private = any([IPAddress(floating_ip.ip_address) in IPNetwork(mask)
+                                          for mask in Config.PRIVATE_NET_MASKS])
+    
+                        if is_private:
+                            self.log_error("Error getting a Floating IP from pool %s. The IP is private." % pool_name)
+                            self.log_info("We have created it, so release it.")
+                            floating_ip.delete()
+                            return False, "Error attaching a Floating IP to the node. Private IP returned."
 
-                    is_private = any([IPAddress(floating_ip.ip_address) in IPNetwork(mask)
-                                      for mask in Config.PRIVATE_NET_MASKS])
-
-                    if is_private:
-                        self.log_error("Error getting a Floating IP from pool %s. The IP is private." % pool_name)
-                        self.log_info("We have created it, so release it.")
-                        floating_ip.delete()
-                        return False, "Error attaching a Floating IP to the node. Private IP returned."
-
+                    self.log_debug(floating_ip)
                     # sometimes the ip cannot be attached inmediately
                     # we have to try and wait
                     cont = 0
@@ -792,7 +785,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                             node.driver.ex_attach_floating_ip_to_node(node, floating_ip)
                             attached = True
                         except Exception as atex:
-                            self.log_warn("Error attaching a Floating IP to the node: %s" % str(atex))
+                            self.log_warn("Error attaching a Floating IP to the node: %s" % atex.args[0])
                             cont += 1
                             if cont < retries:
                                 time.sleep(delay)
@@ -808,8 +801,8 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 return False, "No pools available."
 
         except Exception as ex:
-            self.log_exception("Error adding an Elastic/Floating IP to VM ID: " + str(vm.id))
-            return False, str(ex)
+            self.log_exception("Error adding an Elastic/Floating IP to VM ID: %s" % vm.id)
+            return False, "%s" % ex.args[0]
 
     def _get_security_group(self, driver, sg_name):
         try:
