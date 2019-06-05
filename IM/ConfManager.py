@@ -130,7 +130,7 @@ class ConfManager(LoggerMixin, threading.Thread):
             self.log_info("Stopping pending Ansible process.")
             self.ansible_process.terminate()
 
-    def wait_all_vm_ips(self, timeout=Config.WAIT_RUNNING_VM_TIMEOUT):
+    def wait_all_vm_ips(self, timeout=Config.ANSIBLE_INSTALL_TIMEOUT):
         """
         Assure that all the VMs of the Inf. have all the requested Ips
         """
