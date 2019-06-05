@@ -146,13 +146,10 @@ class ConfManager(LoggerMixin, threading.Thread):
                                   " is not running, do not wait it to have an IP.")
                     continue
 
-                i = 0
-                all_ips = True
-                while vm.info.systems[0].hasFeature("net_interface.%d.connection" % i):
-                    if not vm.info.systems[0].getValue("net_interface.%d.ip" % i):
-                        all_ips = False
-                        break
-                    i += 1
+                if vm.hasPublicNet():
+                    if not vm.getPublicIP():
+                        success = False
+                        vm.update_status(self.auth)
 
                 if not all_ips:
                     success = False
