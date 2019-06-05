@@ -151,10 +151,6 @@ class ConfManager(LoggerMixin, threading.Thread):
                         success = False
                         vm.update_status(self.auth)
 
-                if not all_ips:
-                    success = False
-                    vm.update_status(self.auth)
-
             if not success:
                 self.log_warn("Still waiting all the VMs to have all the requested IPs")
                 wait += Config.CONFMAMAGER_CHECK_STATE_INTERVAL
