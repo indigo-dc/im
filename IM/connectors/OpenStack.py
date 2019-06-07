@@ -15,15 +15,15 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import time
-import uuid
 from netaddr import IPNetwork, IPAddress
 import os.path
 import tempfile
 
 try:
-    from libcloud.compute.types import Provider, NodeState
+    from libcloud.compute.types import Provider
     from libcloud.compute.providers import get_driver
     from libcloud.compute.base import NodeImage, NodeAuthSSHKey
+    from libcloud.compute.drivers.openstack import OpenStack_2_NodeDriver, OpenStack_2_SubNet
 except Exception as ex:
     print("WARN: libcloud library not correctly installed. OpenStackCloudConnector will not work!.")
     print(ex)
@@ -93,16 +93,25 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             protocol = self.cloud.protocol
             if not protocol:
                 protocol = "http"
+            port = self.cloud.port
+            if port == -1:
+                if protocol == "http":
+                    port = 80
+                elif protocol == "https":
+                    port = 443
+                else:
+                    raise Exception("Invalid port/protocol specified for OpenStack site: %s" % self.cloud.server)
 
             parameters = {"auth_version": '2.0_password',
-                          "auth_url": protocol + "://" + self.cloud.server + ":" + str(self.cloud.port),
+                          "auth_url": protocol + "://" + self.cloud.server + ":" + str(port),
                           "auth_token": None,
                           "service_type": None,
                           "service_name": None,
-                          "service_region": 'RegionOne',
+                          "service_region": None,
                           "base_url": None,
                           "network_url": None,
                           "image_url": None,
+                          "volume_url": None,
                           "api_version": "2.0",
                           "domain": None}
 
@@ -147,7 +156,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             kwargs = {}
             for key, value in parameters.items():
                 if value:
-                    if key in ['base_url', 'auth_token', 'service_type', 'image_url',
+                    if key in ['base_url', 'auth_token', 'service_type', 'image_url', 'volume_url',
                                'network_url', 'service_region', 'auth_version', 'auth_url']:
                         key = 'ex_force_%s' % key
                     elif key == 'domain':
@@ -164,6 +173,14 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             # Workaround to OTC to enable to set service_name as None
             if parameters["service_name"] == "None":
                 driver.connection.service_name = None
+            # Workaround to unset default service_region (RegionOne)
+            if parameters["service_region"] is None:
+                driver.connection.service_region = None
+                if isinstance(driver, OpenStack_2_NodeDriver):
+                    driver.connection.service_region = None
+                    driver.image_connection.service_region = None
+                    driver.network_connection.service_region = None
+                    driver.volumev2_connection.service_region = None
 
             self.driver = driver
             return driver
@@ -229,6 +246,75 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         else:
             return None
 
+    def addRouterInstance(self, vm, driver):
+        """
+        Add support for IndigoVR
+
+        openstack subnet set --host-route destination=10.0.0.0/16,gateway=10.0.1.5 subnet1
+        openstack port list --server net1-router
+        openstack port set --disable-port-security { port from previous step }
+        """
+        success = True
+        try:
+            i = 0
+            while vm.info.systems[0].getValue("net_interface." + str(i) + ".connection"):
+                net_name = vm.info.systems[0].getValue("net_interface." + str(i) + ".connection")
+                i += 1
+                network = vm.info.get_network_by_id(net_name)
+                if network.getValue('router'):
+                    net_provider_id = network.getValue('provider_id')
+                    router_info = network.getValue('router').split(",")
+                    if len(router_info) != 2:
+                        self.log_error("Incorrect router format.")
+                        success = False
+                        break
+
+                    system_router = router_info[1]
+                    router_cidr = router_info[0]
+
+                    vrouter = None
+                    for v in vm.inf.vm_list:
+                        if v.info.systems[0].name == system_router:
+                            vrouter = v
+                            break
+                    if not vrouter:
+                        self.log_error("No VRouter instance found with name %s" % system_router)
+                        success = False
+                        break
+
+                    vrouter = vrouter.getIfaceIP(0)
+                    if not vrouter:
+                        self.log_error("VRouter %s has no IP. wait." % system_router)
+                        success = False
+                        break
+
+                    ost_net = self.get_ost_net(driver, name=net_provider_id)
+                    if 'subnets' in ost_net.extra and len(ost_net.extra['subnets']) == 1:
+                        subnet_id = ost_net.extra['subnets'][0]
+                    else:
+                        self.log_error("Unexpected subnet values in OST net.")
+                        success = False
+                        break
+
+                    subnet = OpenStack_2_SubNet(subnet_id, None, None, ost_net.id, driver)
+
+                    host_routes = [{"destination": router_cidr, "nexthop": vrouter}]
+                    self.log_info("Updating subnet %s setting host routes: %s" % (subnet.name, host_routes))
+                    driver.ex_update_subnet(subnet, host_routes=host_routes)
+
+                    for port in driver.ex_list_ports():
+                        if port.extra['device_id'] == ost_net.id:
+                            self.log_info("Disabling security port in %s" % port.id)
+                            driver.ex_update_port(port, port_security_enabled=False)
+
+                    # once set, delete it to not set it again
+                    network.delValue('router')
+        except Exception:
+            success = False
+            self.log_exception("Error adding Router Instance")
+
+        return success
+
     def updateVMInfo(self, vm, auth_data):
         node = self.get_node_with_id(vm.id, auth_data)
         if node:
@@ -238,8 +324,8 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             instance_type = node.driver.ex_get_size(flavorId)
             self.update_system_info_from_instance(vm.info.systems[0], instance_type)
 
+            self.addRouterInstance(vm, node.driver)
             self.setIPsFromInstance(vm, node)
-            self.attach_volumes(vm, node)
         else:
             self.log_warn("Error updating the instance %s. VM not found." % vm.id)
             return (False, "Error updating the instance %s. VM not found." % vm.id)
@@ -247,7 +333,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         return (True, vm)
 
     @staticmethod
-    def map_radl_ost_networks(radl_nets, ost_nets):
+    def map_radl_ost_networks(vm, ost_nets):
         """
         Generate a mapping between the RADL networks and the OST networks
 
@@ -261,20 +347,30 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         res = {"#UNMAPPED#": []}
         for ip, (net_name, is_public) in ost_nets.items():
             if net_name:
-                for radl_net in radl_nets:
+                for radl_net in vm.info.networks:
                     net_provider_id = radl_net.getValue('provider_id')
+                    net_cidr = radl_net.getValue('cidr')
 
                     if net_provider_id:
                         if net_name == net_provider_id:
                             if radl_net.isPublic() == is_public:
                                 res[radl_net.id] = ip
+                                if ip in res["#UNMAPPED#"]:
+                                    res["#UNMAPPED#"].remove(ip)
                                 break
                             else:
                                 # the ip not matches the is_public value
-                                res["#UNMAPPED#"].append(ip)
+                                if ip not in res["#UNMAPPED#"]:
+                                    res["#UNMAPPED#"].append(ip)
+                    elif net_cidr and IPAddress(ip) in IPNetwork(net_cidr):
+                        res[radl_net.id] = ip
+                        radl_net.setValue('provider_id', net_name)
+                        if ip in res["#UNMAPPED#"]:
+                            res["#UNMAPPED#"].remove(ip)
+                        break
                     else:
                         if radl_net.id not in res:
-                            if radl_net.isPublic() == is_public:
+                            if radl_net.isPublic() == is_public and vm.getNumNetworkWithConnection(radl_net.id):
                                 res[radl_net.id] = ip
                                 radl_net.setValue('provider_id', net_name)
                                 if ip in res["#UNMAPPED#"]:
@@ -282,17 +378,18 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                                 break
                             else:
                                 # the ip not matches the is_public value
-                                res["#UNMAPPED#"].append(ip)
+                                if ip not in res["#UNMAPPED#"]:
+                                    res["#UNMAPPED#"].append(ip)
             else:
                 # It seems to be a floating IP
                 added = False
-                for radl_net in radl_nets:
+                for radl_net in vm.info.networks:
                     if radl_net.id not in res and radl_net.isPublic() == is_public:
                         res[radl_net.id] = ip
                         added = True
                         break
 
-                if not added:
+                if not added and ip not in res["#UNMAPPED#"]:
                     res["#UNMAPPED#"].append(ip)
 
         return res
@@ -307,8 +404,8 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 for ip in pool.list_floating_ips():
                     if ip.node_id == node.id:
                         ips.append(ip.ip_address)
-        except:
-            self.log_exception("Error node floating ips")
+        except Exception:
+            self.log_exception("Error getting node floating ips")
         return ips
 
     def setIPsFromInstance(self, vm, node):
@@ -343,7 +440,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                     if not is_private:
                         public_ips.append(float_ip)
 
-            map_nets = self.map_radl_ost_networks(vm.info.networks, ip_net_map)
+            map_nets = self.map_radl_ost_networks(vm, ip_net_map)
 
             system = vm.info.systems[0]
             i = 0
@@ -412,6 +509,18 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                     Feature("cpu.count", "=", instance_type.vcpus), conflict="me", missing="other")
 
     @staticmethod
+    def get_ost_net(driver, name=None, netid=None):
+        """
+        Get a OST network
+        """
+        for ost_net in driver.ex_list_networks():
+            if name and ost_net.name == name:
+                return ost_net
+            if netid and ost_net.id == netid:
+                return ost_net
+        return None
+
+    @staticmethod
     def get_ost_network_info(driver, pool_names):
         ost_nets = driver.ex_list_networks()
         get_subnets = False
@@ -474,6 +583,138 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             i += 1
 
         return net_map
+
+    @staticmethod
+    def get_router_public(driver):
+        pub_nets = []
+        for net in driver.ex_list_networks():
+            if 'router:external' in net.extra and net.extra['router:external']:
+                pub_nets.append(net.id)
+
+        for router in driver.ex_list_routers():
+            if router.extra['external_gateway_info']:
+                if router.extra['external_gateway_info']['network_id'] in pub_nets:
+                    return router
+
+        return None
+
+    @staticmethod
+    def is_net_in_router(driver, net, router):
+        """
+        Check if a net has an interface in a router
+        """
+        for port in driver.ex_list_ports():
+            if port.extra['device_id'] == router.id and port.extra['network_id'] == net.id:
+                return True
+        return False
+
+    def delete_networks(self, driver, inf):
+        """
+        Delete created OST networks
+        """
+        router = self.get_router_public(driver)
+        msg = ""
+        res = True
+        for ost_net in driver.ex_list_networks():
+            net_prefix = "im-%s-" % inf.id
+            if ost_net.name.startswith(net_prefix):
+                if 'subnets' in ost_net.extra and len(ost_net.extra['subnets']) == 1:
+                    subnet_id = ost_net.extra['subnets'][0]
+                    if router is None:
+                        self.log_warn("No public router found.")
+                    else:
+                        self.log_info("Deleting subnet %s to the router %s" % (subnet_id, router.name))
+                        subnet = OpenStack_2_SubNet(subnet_id, None, None, ost_net.id, driver)
+                        try:
+                            driver.ex_del_router_subnet(router, subnet)
+                        except Exception as ex:
+                            self.log_exception("Error deleting subnet %s from the router %s" % (subnet_id,
+                                                                                                router.name))
+                            res = False
+                            msg = "Error deleting subnet %s from the router %s: %s" % (subnet_id,
+                                                                                       router.name,
+                                                                                       ex.args[0])
+
+                    self.log_info("Deleting net %s." % ost_net.name)
+                    driver.ex_delete_network(ost_net)
+
+        return res, msg
+
+    def create_networks(self, driver, radl, inf):
+        """
+        Create OST networks
+        """
+        try:
+            i = 0
+            router = self.get_router_public(driver)
+
+            while radl.systems[0].getValue("net_interface." + str(i) + ".connection"):
+                net_name = radl.systems[0].getValue("net_interface." + str(i) + ".connection")
+                i += 1
+                network = radl.get_network_by_id(net_name)
+                if network.getValue('create') == 'yes' and not network.isPublic():
+                    ost_net_name = network.getValue('provider_id')
+                    if not ost_net_name:
+                        ost_net_name = "im-%s-%s" % (inf.id, net_name)
+
+                    # First check if the net already exists
+                    if self.get_ost_net(driver, name=ost_net_name):
+                        network.setValue('provider_id', ost_net_name)
+                        self.log_debug("Ost network %s exists. Do not create." % ost_net_name)
+                        continue
+
+                    net_cidr = network.getValue('cidr')
+                    net_dnsserver = network.getValue('dnsserver')
+
+                    # create the network
+                    try:
+                        self.log_info("Creating ost network: %s" % ost_net_name)
+                        ost_net = driver.ex_create_network(ost_net_name)
+                    except Exception as ex:
+                        self.log_exception("Error creating ost network for net %s." % net_name)
+                        raise Exception("Error creating ost network for net %s: %s" % (net_name,
+                                                                                       ex.args[0]))
+
+                    # now create the subnet
+                    ost_subnet_name = "im-%s-sub%s" % (inf.id, net_name)
+                    try:
+                        self.log_info("Creating ost subnet: %s" % ost_subnet_name)
+                        ost_subnet = driver.ex_create_subnet(ost_subnet_name, ost_net, net_cidr,
+                                                             ip_version=4, dns_nameservers=[net_dnsserver])
+                    except Exception as ex:
+                        self.log_exception("Error creating ost subnet for net %s." % net_name)
+                        # in case of error delete the associated network
+                        self.log_debug("Deleting net: %s" % ost_net_name)
+                        driver.ex_delete_network(ost_net)
+                        raise Exception("Error creating ost subnet for net %s: %s" % (net_name,
+                                                                                      ex.args[0]))
+
+                    if router is None:
+                        self.log_warn("No public router found.")
+                    else:
+                        self.log_info("Adding subnet %s to the router %s" % (ost_subnet.name, router.name))
+                        try:
+                            driver.ex_add_router_subnet(router, ost_subnet)
+                        except Exception as ex:
+                            # some time the nets are auto added to the router
+                            if self.is_net_in_router(driver, ost_net, router):
+                                self.log_info("Net %s already in the router %s" % (ost_net.name, router.name))
+                            else:
+                                self.log_error("Error adding subnet to the router. Deleting net and subnet.")
+                                driver.ex_delete_subnet(ost_subnet)
+                                driver.ex_delete_network(ost_net)
+                                raise Exception("Error adding subnet to the router: %s" % ex.args[0])
+
+                    network.setValue('provider_id', ost_net_name)
+        except Exception as ext:
+            self.log_exception("Error creating networks.")
+            try:
+                self.delete_networks(driver, inf)
+            except:
+                self.log_exception("Error deleting networks.")
+            raise Exception("Error creating networks: %s" % ext.args[0])
+
+        return True
 
     def get_networks(self, driver, radl):
         """
@@ -541,12 +782,70 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
         return nets
 
+    @staticmethod
+    def get_volumes(driver, image, radl):
+        """
+        Create the required volumes (in the RADL) for the VM.
+
+        Arguments:
+           - vm(:py:class:`IM.VirtualMachine`): VM to modify.
+        """
+        system = radl.systems[0]
+
+        boot_disk = {
+            'boot_index': 0,
+            'device_name': 'vda',
+            'source_type': "image",
+            'delete_on_termination': False,
+            'uuid': image.id
+        }
+        res = [boot_disk]
+
+        cont = 1
+        while ((system.getValue("disk." + str(cont) + ".size") or
+                system.getValue("disk." + str(cont) + ".image.url")) and
+                system.getValue("disk." + str(cont) + ".device")):
+            disk_url = system.getValue("disk." + str(cont) + ".image.url")
+            disk_device = system.getValue("disk." + str(cont) + ".device")
+            disk_device = "vd%s" % disk_device[-1]
+            disk_fstype = system.getValue("disk." + str(cont) + ".fstype")
+            if not disk_fstype:
+                disk_fstype = 'ext3'
+
+            disk_size = None
+            if disk_url:
+                volume = driver.ex_get_volume(os.path.basename(disk_url))
+                disk = {
+                    'boot_index': cont,
+                    'device_name': disk_device,
+                    'source_type': "volume",
+                    'delete_on_termination': False,
+                    'destination_type': "volume",
+                    'uuid': volume.id
+                }
+            else:
+                disk_size = system.getFeature("disk." + str(cont) + ".size").getValue('G')
+
+                disk = {
+                    'boot_index': cont,
+                    'device_name': disk_device,
+                    'source_type': "blank",
+                    'guest_format': disk_fstype,
+                    'destination_type': "volume",
+                    'delete_on_termination': True,
+                    'volume_size': disk_size
+                }
+            res.append(disk)
+            cont += 1
+
+        return res
+
     def launch(self, inf, radl, requested_radl, num_vm, auth_data):
         driver = self.get_driver(auth_data)
 
         system = radl.systems[0]
         image_id = self.get_image_id(system.getValue("disk.0.image.url"))
-        image = NodeImage(id=image_id, name=None, driver=driver)
+        image = driver.get_image(image_id)
 
         instance_type = self.get_instance_type(driver.list_sizes(), system)
         if not instance_type:
@@ -558,45 +857,34 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         if not name:
             name = "userimage"
 
+        blockdevicemappings = self.get_volumes(driver, image, radl)
+
+        with inf._lock:
+            self.create_networks(driver, radl, inf)
+
         nets = self.get_networks(driver, radl)
 
         sgs = self.create_security_groups(driver, inf, radl)
 
         args = {'size': instance_type,
-                'image': image,
                 'networks': nets,
+                'image': image,
                 'ex_security_groups': sgs,
+                'ex_blockdevicemappings': blockdevicemappings,
                 'name': "%s-%s" % (name, int(time.time() * 100))}
 
         tags = self.get_instance_tags(system)
         if tags:
             args['ex_metadata'] = tags
 
-        keypair = None
-        keypair_name = None
-        keypair_created = False
         public_key = system.getValue("disk.0.os.credentials.public_key")
-        if public_key:
-            keypair = driver.get_key_pair(public_key)
-            if keypair:
-                system.setUserKeyCredentials(
-                    system.getCredentials().username, None, keypair.private_key)
-            else:
-                if "ssh_key" in driver.features.get("create_node", []):
-                    args["auth"] = NodeAuthSSHKey(public_key)
+        if not public_key:
+            # We must generate them
+            (public_key, private_key) = self.keygen()
+            system.setValue('disk.0.os.credentials.private_key', private_key)
 
-        elif not system.getValue("disk.0.os.credentials.password"):
-            keypair_name = "im-%s" % str(uuid.uuid1())
-            self.log_info("Create keypair: %s" % keypair_name)
-            keypair = driver.create_key_pair(keypair_name)
-            keypair_created = True
-            public_key = keypair.public_key
-            system.setUserKeyCredentials(system.getCredentials().username, None, keypair.private_key)
-
-            if keypair.public_key and "ssh_key" in driver.features.get("create_node", []):
-                args["auth"] = NodeAuthSSHKey(keypair.public_key)
-            else:
-                args["ex_keyname"] = keypair_name
+        if "ssh_key" in driver.features.get("create_node", []):
+            args["auth"] = NodeAuthSSHKey(public_key)
 
         user = system.getValue('disk.0.os.credentials.username')
         if not user:
@@ -631,24 +919,18 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 vm.id = node.id
                 vm.info.systems[0].setValue('instance_id', str(node.id))
                 vm.info.systems[0].setValue('instance_name', str(node.name))
-                # Add the keypair name to remove it later
-                if keypair_name:
-                    vm.keypair = keypair_name
                 self.log_info("Node successfully created.")
                 all_failed = False
                 vm.destroy = False
                 res.append((True, vm))
             except Exception as ex:
-                res.append((False, str(ex)))
+                self.log_exception("Error creating node: %s." % ex.args[0])
+                res.append((False, "%s" % ex.args[0]))
 
             i += 1
 
-        # if all the VMs have failed, remove the sgs and keypair
+        # if all the VMs have failed, remove the sgs
         if all_failed:
-            if keypair_created:
-                # only delete in case of the user do not specify the keypair name
-                self.log_info("Deleting keypair: %s." % keypair_name)
-                driver.delete_key_pair(keypair)
             for sg in sgs:
                 self.log_info("Deleting security group: %s." % sg.id)
                 driver.ex_delete_security_group(sg)
@@ -737,13 +1019,13 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
         Arguments:
            - vm(:py:class:`IM.VirtualMachine`): VM information.
-           - node(:py:class:`libcloud.compute.base.Node`): node object to attach the volumes.
+           - node(:py:class:`libcloud.compute.base.Node`): node object to attach the ip.
            - fixed_ip(str, optional): specifies a fixed IP to add to the instance.
            - pool_name(str, optional): specifies a pool to get the elastic IP
         Returns: a :py:class:`OpenStack_1_1_FloatingIpAddress` added or None if some problem occur.
         """
         try:
-            self.log_info("Add an Floating IP")
+            self.log_info("Add a Floating IP")
 
             pool = self.get_ip_pool(node.driver, pool_name)
             if not pool:
@@ -760,27 +1042,20 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 else:
                     # First try to check if there is a Float IP free to attach to the node
                     found, floating_ip = self.get_floating_ip(pool)
-                    if found:
-                        try:
-                            node.driver.ex_attach_floating_ip_to_node(node, floating_ip)
-                        except Exception as atex:
-                            self.log_warn("Error attaching a found Floating IP to the node. "
-                                          "Create a new one (%s)." % str(atex))
-                    else:
-                        self.log_debug(floating_ip)
+                    if not found:
+                        # Now create a Float IP
+                        floating_ip = pool.create_floating_ip()
 
-                    # Now create a Float IP
-                    floating_ip = pool.create_floating_ip()
+                        is_private = any([IPAddress(floating_ip.ip_address) in IPNetwork(mask)
+                                          for mask in Config.PRIVATE_NET_MASKS])
 
-                    is_private = any([IPAddress(floating_ip.ip_address) in IPNetwork(mask)
-                                      for mask in Config.PRIVATE_NET_MASKS])
+                        if is_private:
+                            self.log_error("Error getting a Floating IP from pool %s. The IP is private." % pool_name)
+                            self.log_info("We have created it, so release it.")
+                            floating_ip.delete()
+                            return False, "Error attaching a Floating IP to the node. Private IP returned."
 
-                    if is_private:
-                        self.log_error("Error getting a Floating IP from pool %s. The IP is private." % pool_name)
-                        self.log_info("We have created it, so release it.")
-                        floating_ip.delete()
-                        return False, "Error attaching a Floating IP to the node. Private IP returned."
-
+                    self.log_debug(floating_ip)
                     # sometimes the ip cannot be attached inmediately
                     # we have to try and wait
                     cont = 0
@@ -792,7 +1067,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                             node.driver.ex_attach_floating_ip_to_node(node, floating_ip)
                             attached = True
                         except Exception as atex:
-                            self.log_warn("Error attaching a Floating IP to the node: %s" % str(atex))
+                            self.log_warn("Error attaching a Floating IP to the node: %s" % atex.args[0])
                             cont += 1
                             if cont < retries:
                                 time.sleep(delay)
@@ -808,8 +1083,8 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 return False, "No pools available."
 
         except Exception as ex:
-            self.log_exception("Error adding an Elastic/Floating IP to VM ID: " + str(vm.id))
-            return False, str(ex)
+            self.log_exception("Error adding an Elastic/Floating IP to VM ID: %s" % vm.id)
+            return False, "%s" % ex.args[0]
 
     def _get_security_group(self, driver, sg_name):
         try:
@@ -831,7 +1106,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         # First create a SG for the entire Infra
         # Use the InfrastructureInfo lock to assure that only one VM create the SG
         with inf._lock:
-            sg_name = "im-%s" % str(inf.id)
+            sg_name = "im-%s" % inf.id
             sg = self._get_security_group(driver, sg_name)
             if not sg:
                 self.log_info("Creating security group: %s" % sg_name)
@@ -864,7 +1139,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 driver.ex_create_security_group_rule(sg, 'tcp', 1, 65535, source_security_group=sg)
                 driver.ex_create_security_group_rule(sg, 'udp', 1, 65535, source_security_group=sg)
             except Exception as addex:
-                self.log_warn("Exception adding SG rules. Probably the rules exists:" + str(addex))
+                self.log_warn("Exception adding SG rules. Probably the rules exists: %s" % addex.args[0])
 
             outports = network.getOutPorts()
             if outports:
@@ -875,7 +1150,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                                                                  outport.get_port_init(),
                                                                  outport.get_port_end(), '0.0.0.0/0')
                         except Exception as ex:
-                            self.log_warn("Exception adding SG rules: " + str(ex))
+                            self.log_warn("Exception adding SG rules: %s" % ex.args[0])
                     else:
                         if outport.get_remote_port() != 22 or not network.isPublic():
                             try:
@@ -883,7 +1158,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                                                                      outport.get_remote_port(),
                                                                      outport.get_remote_port(), '0.0.0.0/0')
                             except Exception as ex:
-                                self.log_warn("Exception adding SG rules: " + str(ex))
+                                self.log_warn("Exception adding SG rules: %s" % ex.args[0])
 
             i += 1
 
@@ -896,60 +1171,63 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             self.log_warn("No VM ID. Ignoring")
             node = None
 
+        success = []
+        msgs = []
         if node:
-            success = node.destroy()
+            res = node.destroy()
+            success.append(res)
 
             try:
-                self.delete_elastic_ips(node, vm)
-            except:
-                self.log_exception("Error deleting elastic ips.")
-
-            if not success:
-                return (False, "Error destroying node: " + vm.id)
+                res, msg = self.delete_elastic_ips(node, vm)
+            except Exception as ex:
+                res = False
+                msg = "%s" % ex.args[0]
+            success.append(res)
+            msgs.append(msg)
 
             self.log_info("VM " + str(vm.id) + " successfully destroyed")
         else:
             self.log_warn("VM " + str(vm.id) + " not found.")
 
         driver = self.get_driver(auth_data)
-        try:
-            public_key = vm.getRequestedSystem().getValue('disk.0.os.credentials.public_key')
-            if (vm.keypair and public_key is None or len(public_key) == 0 or
-                    (len(public_key) >= 1 and public_key.find('-----BEGIN CERTIFICATE-----') != -1)):
-                # only delete in case of the user do not specify the
-                # keypair name
-                keypair = driver.get_key_pair(vm.keypair)
-                if keypair:
-                    driver.delete_key_pair(keypair)
-        except:
-            self.log_exception("Error deleting keypair.")
 
-        try:
-            # Delete the EBS volumes
-            self.delete_volumes(driver, vm)
-        except:
-            self.log_exception("Error deleting volumes.")
-
-        try:
+        if last:
             # Delete the SG if this is the last VM
-            if last:
-                self.delete_security_groups(driver, vm.inf)
-            else:
-                # If this is not the last vm, we skip this step
-                self.log_info("There are active instances. Not removing the SG")
-        except Exception:
-            self.log_exception("Error deleting security groups.")
+            try:
+                res, msg = self.delete_security_groups(driver, vm.inf)
+            except Exception as ex:
+                res = False
+                msg = "%s" % ex.args[0]
+            success.append(res)
+            msgs.append(msg)
 
-        return (True, "")
+            # Delete the created networks
+            try:
+                res, msg = self.delete_networks(driver, vm.inf)
+            except Exception as ex:
+                res = False
+                msg = "%s" % ex.args[0]
+            success.append(res)
+            msgs.append(msg)
+        else:
+            # If this is not the last vm, we skip this step
+            self.log_info("There are active instances. Not removing the SGs or nets.")
+
+        return (all(success), "\n ".join(msgs))
 
     def delete_security_groups(self, driver, inf, timeout=180, delay=10):
         """
         Delete the SG of this inf
         """
-        sg_names = ["im-%s" % str(inf.id)]
+        sg_names = ["im-%s" % inf.id]
         for net in inf.radl.networks:
-            sg_names.append("im-%s-%s" % (str(inf.id), net.id))
+            sg_name = net.getValue("sg_name")
+            if not sg_name:
+                sg_name = "im-%s-%s" % (inf.id, net.id)
+            sg_names.append(sg_name)
 
+        msg = ""
+        deleted = True
         for sg_name in sg_names:
             # wait it to terminate and then remove the SG
             cont = 0
@@ -961,12 +1239,17 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                     self.log_info("The SG %s does not exist. Do not delete it." % sg_name)
                     deleted = True
                 else:
-                    try:
-                        self.log_info("Deleting SG: %s" % sg_name)
-                        driver.ex_delete_security_group(sg)
+                    if sg.description != "Security group created by the IM":
+                        self.log_info("SG %s not created by the IM. Do not delete it." % sg_name)
                         deleted = True
-                    except Exception as ex:
-                        self.log_warn("Error deleting the SG: %s" % str(ex))
+                    else:
+                        try:
+                            self.log_info("Deleting SG: %s" % sg_name)
+                            driver.ex_delete_security_group(sg)
+                            deleted = True
+                        except Exception as ex:
+                            self.log_warn("Error deleting the SG: %s" % ex.args[0])
+                            msg = "Error deleting the SG: %s" % ex.args[0]
 
                     if not deleted:
                         time.sleep(delay)
@@ -974,6 +1257,8 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
             if not deleted:
                 self.log_error("Error deleting the SG: Timeout.")
+
+        return deleted, msg
 
     def get_node_location(self, node):
         """
@@ -1002,7 +1287,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 image = node.driver.create_image(node, image_name)
             except Exception as ex:
                 self.log_exception("Error creating image.")
-                return False, "Error creating image: %s." % str(ex)
+                return False, "Error creating image: %s." % ex.args[0]
             new_url = "ost://%s/%s" % (self.cloud.server, image.id)
             if auto_delete:
                 vm.inf.snapshots.append(new_url)
@@ -1017,13 +1302,13 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             image = driver.get_image(image_id)
         except Exception as ex:
             self.log_exception("Error getting image.")
-            return (False, "Error getting image %s: %s" % (image_id, str(ex)))
+            return (False, "Error getting image %s: %s" % (image_id, ex.args[0]))
         try:
             driver.delete_image(image)
             return True, ""
         except Exception as ex:
             self.log_exception("Error deleting image.")
-            return (False, "Error deleting image.: %s" % str(ex))
+            return (False, "Error deleting image.: %s" % ex.args[0])
 
     def reboot(self, vm, auth_data):
         node = self.get_node_with_id(vm.id, auth_data)

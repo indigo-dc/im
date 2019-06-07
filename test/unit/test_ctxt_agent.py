@@ -72,8 +72,10 @@ class TestCtxtAgent(unittest.TestCase):
             vm_conf_data['id'] = vm
             if vm == 0:
                 vm_conf_data['master'] = True
+                vm_conf_data['nat_instance'] = True
             else:
                 vm_conf_data['master'] = False
+                vm_conf_data['nat_instance'] = False
             if vm == 2:
                 vm_conf_data['os'] = "windows"
             else:
@@ -275,7 +277,7 @@ class TestCtxtAgent(unittest.TestCase):
         copy_content = yaml_data[0]['tasks'][1]['copy'][pos + 9:-2]
         self.assertEqual(copy_content, "[{src: ansible_role}, {name: hadoop, src: "
                          "'git+https://github.com/micafer/ansible-role-hadoop'}]")
-        self.assertEqual(yaml_data[0]['tasks'][2]['command'][:44], "ansible-galaxy install -r /tmp/galaxy_roles_")
+        self.assertEqual(yaml_data[0]['tasks'][2]['command'][:47], "ansible-galaxy install -c -r /tmp/galaxy_roles_")
 
         os.unlink(res)
 

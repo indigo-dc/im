@@ -132,9 +132,15 @@
     - name: Upgrade setuptools with Pip
       pip: name=setuptools state=latest
 
-    - name: Upgrade pyOpenSSL with Pip
-      pip: name=pyOpenSSL state=latest
-      ignore_errors: yes
+    - name: Install pkgs with Pip in RH6
+      pip: name="{{ item.name }}" version="{{ item.version }}"
+      when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int <= 6
+      with_items:
+        - { name: 'pyyaml', version: '3.13' }
+        - { name: 'idna', version: '2.7' }
+        - { name: 'argparse', version: '1.4.0' }
+        - { name: 'paramiko', version: '2.2.4' }
+        - { name: 'xmltodict', version: '0.11.0' }
 
     - name: Install ansible with Pip
       pip: name=ansible extra_args="-I"

@@ -92,7 +92,7 @@ class TestGCEConnector(TestCloudConnectorBase):
     @patch('IM.InfrastructureList.InfrastructureList.save_data')
     def test_20_launch(self, save_data, get_driver):
         radl_data = """
-            network net1 (outbound = 'yes' and outports = '8080,9000:9100' and sg_name = 'fwname')
+            network net1 (outbound = 'yes' and outports = '8080,9000:9100')
             network net2 ()
             system test (
             cpu.arch='x86_64' and
@@ -107,7 +107,10 @@ class TestGCEConnector(TestCloudConnectorBase):
             disk.0.os.credentials.username = 'user' and
             disk.1.size=1GB and
             disk.1.device='hdb' and
-            disk.1.mount_path='/mnt/path'
+            disk.1.mount_path='/mnt/path' and
+            disk.2.image.url='gce://us-central1-a/somedisk' and
+            disk.2.device='hdc' and
+            disk.2.mount_path='/mnt2/path'
             )"""
         radl = radl_parse.parse_radl(radl_data)
         radl.check()
@@ -130,7 +133,9 @@ class TestGCEConnector(TestCloudConnectorBase):
         node_size.extra = {'guestCpus': 1}
         driver.list_sizes.return_value = [node_size]
 
-        driver.ex_get_image.return_value = "image"
+        image = MagicMock()
+        image.extra['selfLink'] = "image_selfLink"
+        driver.ex_get_image.return_value = image
         driver.ex_create_address.return_value = "ip"
         net = MagicMock()
         net.name = "default"
@@ -149,12 +154,27 @@ class TestGCEConnector(TestCloudConnectorBase):
         node3.name = "gce3name"
         driver.ex_create_multiple_nodes.return_value = [node, node2, node3]
 
+        driver.ex_get_network.return_value = None
+
         inf = InfrastructureInfo()
         inf.auth = auth
         res = gce_cloud.launch(inf, radl, radl, 1, auth)
         success, _ = res[0]
         self.assertTrue(success, msg="ERROR: launching a single VM.")
         self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
+        self.assertEqual(driver.create_node.call_args_list[0][1]['ex_network'], "default")
+        self.assertEqual(driver.create_node.call_args_list[0][1]['external_ip'], "ephemeral")
+        self.assertEqual(driver.create_node.call_args_list[0][1]['ex_disks_gce_struct'][1]['deviceName'], "hdb")
+        self.assertEqual(driver.create_node.call_args_list[0][1]['ex_disks_gce_struct'][1]['autoDelete'], True)
+        self.assertEqual(driver.create_node.call_args_list[0][1]['ex_disks_gce_struct'][2]['deviceName'], "hdc")
+        self.assertEqual(driver.create_node.call_args_list[0][1]['ex_disks_gce_struct'][2]['autoDelete'], False)
+        self.assertEqual(driver.ex_create_firewall.call_args_list[0][0], ('fw-default-allow-all',
+                                                                          [{'IPProtocol': 'udp', 'ports': '1-65535'},
+                                                                           {'IPProtocol': 'tcp', 'ports': '1-65535'},
+                                                                           {'IPProtocol': 'icmp'}]))
+        self.assertEqual(driver.ex_create_firewall.call_args_list[1][0], ('fw-default',
+                                                                          [{'IPProtocol': 'tcp',
+                                                                            'ports': ['22', '8080', '9000-9100']}]))
 
         inf = InfrastructureInfo()
         inf.auth = auth
@@ -164,8 +184,8 @@ class TestGCEConnector(TestCloudConnectorBase):
         self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
 
         radl_data = """
-            network net1 (outbound = 'yes' and outports = '8080,9000:9100' and sg_name = 'fwname')
-            network net2 ()
+            network net1 (outbound = 'yes' and outports = '8080,9000:9100')
+            network net2 (create='yes' and cidr='10.0.10.0/24')
             system test (
             cpu.arch='x86_64' and
             cpu.count=1 and
@@ -192,6 +212,8 @@ class TestGCEConnector(TestCloudConnectorBase):
         self.assertEqual(msg, "ERROR: Error msg")
         self.assertEqual(driver.ex_destroy_address.call_count, 1)
         self.assertEqual(driver.ex_destroy_address.call_args_list, [call('ip')])
+        self.assertEqual(driver.ex_create_network.call_args_list[0][0][0], "im-%s-net2" % inf.id)
+        self.assertEqual(driver.ex_create_network.call_args_list[0][0][1], "10.0.10.0/24")
 
     @patch('libcloud.compute.drivers.gce.GCENodeDriver')
     @patch('libcloud.dns.drivers.google.GoogleDNSDriver')
@@ -206,10 +228,7 @@ class TestGCEConnector(TestCloudConnectorBase):
             net_interface.0.dns_name = 'test.domain.com' and
             disk.0.os.name = 'linux' and
             disk.0.image.url = 'gce://us-central1-a/centos-6' and
-            disk.0.os.credentials.username = 'user' and
-            disk.1.size=1GB and
-            disk.1.device='hdb' and
-            disk.1.mount_path='/mnt/path'
+            disk.0.os.credentials.username = 'user'
             )"""
         radl = radl_parse.parse_radl(radl_data)
         radl.check()
@@ -239,12 +258,6 @@ class TestGCEConnector(TestCloudConnectorBase):
         node.size = NodeSize("1", "name1", 512, 1, None, None, driver)
         driver.ex_get_node.return_value = node
 
-        volume = MagicMock()
-        volume.id = "vol1"
-        volume.attach.return_value = True
-        volume.extra = {'status': 'READY'}
-        driver.create_volume.return_value = volume
-
         dns_driver.iterate_zones.return_value = []
         dns_driver.iterate_records.return_value = []
 
@@ -273,13 +286,15 @@ class TestGCEConnector(TestCloudConnectorBase):
         driver = MagicMock()
         get_driver.return_value = driver
 
-        driver.ex_get_node.return_value = MagicMock()
+        node = MagicMock()
+        driver.ex_get_node.return_value = node
         driver.ex_stop_node.return_value = True
 
         success, _ = gce_cloud.stop(vm, auth)
 
         self.assertTrue(success, msg="ERROR: stopping VM info.")
         self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
+        self.assertEquals(driver.ex_stop_node.call_args_list, [call(node)])
 
     @patch('libcloud.compute.drivers.gce.GCENodeDriver')
     def test_50_start(self, get_driver):
@@ -293,13 +308,15 @@ class TestGCEConnector(TestCloudConnectorBase):
         driver = MagicMock()
         get_driver.return_value = driver
 
-        driver.ex_get_node.return_value = MagicMock()
+        node = MagicMock()
+        driver.ex_get_node.return_value = node
         driver.ex_start_node.return_value = True
 
         success, _ = gce_cloud.start(vm, auth)
 
         self.assertTrue(success, msg="ERROR: stopping VM info.")
         self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
+        self.assertEquals(driver.ex_start_node.call_args_list, [call(node)])
 
     @patch('libcloud.compute.drivers.gce.GCENodeDriver')
     def test_52_reboot(self, get_driver):
@@ -313,13 +330,15 @@ class TestGCEConnector(TestCloudConnectorBase):
         driver = MagicMock()
         get_driver.return_value = driver
 
-        driver.ex_get_node.return_value = MagicMock()
+        node = MagicMock()
+        driver.ex_get_node.return_value = node
         driver.reboot_node.return_value = True
 
         success, _ = gce_cloud.reboot(vm, auth)
 
         self.assertTrue(success, msg="ERROR: stopping VM info.")
         self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
+        self.assertEquals(driver.reboot_node.call_args_list, [call(node)])
 
     @patch('libcloud.compute.drivers.gce.GCENodeDriver')
     @patch('libcloud.dns.drivers.google.GoogleDNSDriver')
@@ -341,6 +360,7 @@ class TestGCEConnector(TestCloudConnectorBase):
         radl = radl_parse.parse_radl(radl_data)
 
         inf = MagicMock()
+        inf.id = "infid"
         vm = VirtualMachine(inf, "1", gce_cloud.cloud, radl, radl, gce_cloud, 1)
 
         driver = MagicMock()
@@ -367,12 +387,31 @@ class TestGCEConnector(TestCloudConnectorBase):
         record.data = {'rrdatas': ['158.42.1.1'], 'ttl': 300}
         dns_driver.iterate_records.return_value = [record]
 
+        net = MagicMock()
+        net.name = "im-infid-id"
+        net.destroy.return_value = True
+        driver.ex_list_networks.return_value = [net]
+
+        fw = MagicMock()
+        fw.name = "fw-im-infid-id"
+        fw.destroy.return_value = True
+        driver.ex_list_firewalls.return_value = [fw]
+
+        route = MagicMock()
+        route.name = "im-infid-id"
+        route.destroy.return_value = True
+        driver.ex_list_routes.return_value = [route]
+
         success, _ = gce_cloud.finalize(vm, True, auth)
 
         self.assertTrue(success, msg="ERROR: finalizing VM info.")
+        self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
         self.assertEquals(dns_driver.delete_record.call_count, 1)
         self.assertEquals(dns_driver.delete_record.call_args_list[0][0][0].name, 'test.domain.com.')
-        self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
+        self.assertEquals(node.destroy.call_args_list, [call()])
+        self.assertEquals(net.destroy.call_args_list, [call()])
+        self.assertEquals(fw.destroy.call_args_list, [call()])
+        self.assertEquals(route.destroy.call_args_list, [call()])
 
     def test_70_get_custom_instance(self):
         radl_data = """
