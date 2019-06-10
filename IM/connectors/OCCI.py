@@ -24,6 +24,7 @@ import uuid
 import json
 import requests
 from netaddr import IPNetwork, IPAddress
+from distutils.version import LooseVersion
 import xmltodict
 try:
     from urlparse import urlparse
@@ -564,7 +565,7 @@ class OCCICloudConnector(CloudConnector):
                 storage_name = "im-disk-%s" % str(uuid.uuid1())
                 success, volume_id = self.create_volume(int(disk_size), storage_name, auth_data, auth_header)
                 if success:
-                    self.log_info("Volume id %s sucessfully created." % volume_id)
+                    self.log_info("Volume id %s successfully created." % volume_id)
 
                     # let's wait the storage to be ready "online"
                     wait_ok = self.wait_volume_state(volume_id, auth_data, auth_header)
@@ -870,7 +871,7 @@ class OCCICloudConnector(CloudConnector):
                                                     self.cloud.path, volume_id,
                                                     self.cloud.path, compute_id, link_id))
                     if device:
-                        body += ';occi.storagelink.deviceid="/dev/%s"\n' % device
+                        body += ';occi.storagelink.deviceid="/dev/%s"' % device
                     body += '\n'
 
                 self.log_debug(body)
@@ -1287,6 +1288,7 @@ class OCCICloudConnector(CloudConnector):
         return None
 
     def get_image_id_and_site_url(self, site_id, image_name, vo_name=None):
+        res = []
         data = OCCICloudConnector.appdb_call('/rest/1.0/va_providers/%s' % site_id)
         if data:
             if 'provider:endpoint_url' in data['appdb:appdb']['virtualization:provider']:
@@ -1295,15 +1297,28 @@ class OCCICloudConnector(CloudConnector):
                     for image in data['appdb:appdb']['virtualization:provider']['provider:image']:
                         if image['@appcname'] == image_name and (not vo_name or image['@voname'] == vo_name):
                             image_basename = os.path.basename(image['@va_provider_image_id'])
+                            vmiversion = os.path.basename(image['@vmiversion'])
                             parts = image_basename.split("#")
                             if len(parts) > 1:
-                                return parts[1], site_url
+                                res.append((parts[1], site_url, vmiversion))
                             else:
-                                return image_basename, site_url
+                                res.append((image_basename, site_url, vmiversion))
             else:
                 self.log_warn("No endpoint_url returned from EGI AppDB for site %s." % site_id)
         else:
             self.log_warn("No data returned from EGI AppDB.")
+
+        if res:
+            if len(res) == 1:
+                return res[0][0], res[0][1]
+            else:
+                self.log_debug("There are more that one VMI version. Select the last one.")
+                last = res[0]
+                for elem in res[1:]:
+                    if LooseVersion(elem[2]) >= LooseVersion(last[2]):
+                        last = elem
+                self.log_debug("Return version num: %s" % last[2])
+                return last[0], last[1]
 
         self.log_warn("No image ID returned from EGI AppDB for image: %s/%s." % (site_id, image_name))
         return '', ''
@@ -1339,6 +1354,8 @@ class KeyStoneAuth:
                 # remove version in some old OpenStack sites
                 if keystone_uri.endswith("/v2.0"):
                     keystone_uri = keystone_uri[:-5]
+                if keystone_uri.endswith("/v3"):
+                    keystone_uri = keystone_uri[:-3]
                 return keystone_uri, None
             else:
                 return None, None

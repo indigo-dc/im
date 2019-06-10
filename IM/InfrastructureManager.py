@@ -299,24 +299,26 @@ class InfrastructureManager:
                 # The user has new applications
                 curr_apps = system.getValue("disk.0.applications")
                 curr_apps_names = {}
-                for app_name in curr_apps.keys():
-                    orig_app_name = app_name
-                    if "," in app_name:
-                        # remove version substring
-                        pos = app_name.find(",")
-                        app_name = app_name[:pos]
-                    curr_apps_names[app_name] = orig_app_name
+                if curr_apps:
+                    for app_name in curr_apps.keys():
+                        orig_app_name = app_name
+                        if "," in app_name:
+                            # remove version substring
+                            pos = app_name.find(",")
+                            app_name = app_name[:pos]
+                        curr_apps_names[app_name] = orig_app_name
 
                 new_apps = new_system.getValue("disk.0.applications")
-                for app_name, app in new_apps.items():
-                    orig_app_name = app_name
-                    if "," in app_name:
-                        # remove version substring
-                        pos = app_name.find(",")
-                        app_name = app_name[:pos]
-                    if app_name in list(curr_apps_names.keys()):
-                        del curr_apps[curr_apps_names[app_name]]
-                    curr_apps[orig_app_name] = app
+                if new_apps:
+                    for app_name, app in new_apps.items():
+                        orig_app_name = app_name
+                        if "," in app_name:
+                            # remove version substring
+                            pos = app_name.find(",")
+                            app_name = app_name[:pos]
+                        if app_name in list(curr_apps_names.keys()):
+                            del curr_apps[curr_apps_names[app_name]]
+                        curr_apps[orig_app_name] = app
 
         # Stick all virtual machines to be reconfigured
         InfrastructureManager.logger.info("Contextualize the Inf ID: " + sel_inf.id)
@@ -510,6 +512,8 @@ class InfrastructureManager:
                 sel_inf.update_radl(radl, [])
                 InfrastructureManager.logger.warn("Inf ID: " + sel_inf.id + ": without any deploy. Exiting.")
                 sel_inf.add_cont_msg("Infrastructure without any deploy. Exiting.")
+                if sel_inf.configured is None:
+                    sel_inf.configured = False
                 return []
         except Exception as ex:
             sel_inf.configured = False
@@ -568,6 +572,8 @@ class InfrastructureManager:
             if not deploy_group:
                 InfrastructureManager.logger.warning("Inf ID: %s: No VMs to deploy!" % sel_inf.id)
                 sel_inf.add_cont_msg("No VMs to deploy. Exiting.")
+                if sel_inf.configured is None:
+                    sel_inf.configured = False
                 return []
 
             cloud_id = deploys_group_cloud[id(deploy_group)]
@@ -899,14 +905,15 @@ class InfrastructureManager:
 
         sel_inf = InfrastructureManager.get_infrastructure(inf_id, auth)
 
+        vm_list = sel_inf.get_vm_list()
         vm_states = {}
-        for vm in sel_inf.get_vm_list():
+        for vm in vm_list:
             # First try to update the status of the VM
             vm.update_status(auth)
             vm_states[str(vm.im_id)] = vm.state
 
         state = None
-        for vm in sel_inf.get_vm_list():
+        for vm in vm_list:
             # First try to update the status of the VM
             if vm.state == VirtualMachine.FAILED:
                 state = VirtualMachine.FAILED
@@ -935,6 +942,9 @@ class InfrastructureManager:
         if state is None:
             if sel_inf.configured is False:
                 state = VirtualMachine.FAILED
+            elif not vm_list and sel_inf.configured is None:
+                # if there are no vms we probably are in the vm creation process
+                state = VirtualMachine.PENDING
             else:
                 state = VirtualMachine.UNKNOWN
 
@@ -1390,7 +1400,10 @@ class InfrastructureManager:
                         break
                 if all_failed:
                     # If all VMs has failed, destroy then inf and return the error
-                    inf.destroy(auth)
+                    try:
+                        inf.destroy(auth)
+                    except Exception as de:
+                        error_msg += "%s" % de
                     raise Exception(error_msg)
         except Exception as e:
             InfrastructureManager.logger.exception("Error Creating Inf ID " + str(inf.id))

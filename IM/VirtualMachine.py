@@ -326,8 +326,7 @@ class VirtualMachine(LoggerMixin):
         # Or if both VMs are connected to the same network
         i = 0
         while self.info.systems[0].getValue("net_interface." + str(i) + ".connection"):
-            net_name = self.info.systems[0].getValue(
-                "net_interface." + str(i) + ".connection")
+            net_name = self.info.systems[0].getValue("net_interface." + str(i) + ".connection")
 
             common_net = False
             j = 0
@@ -506,24 +505,25 @@ class VirtualMachine(LoggerMixin):
             updated = False
             # To avoid to refresh the information too quickly
             if force or now - self.last_update > Config.VM_INFO_UPDATE_FREQUENCY:
+                success = False
                 try:
                     (success, new_vm) = self.getCloudConnector().updateVMInfo(self, auth)
                     if success:
                         state = new_vm.state
                         updated = True
                         self.last_update = now
-                    elif self.creating:
-                        self.log_info("VM is in creation process, set pending state")
-                        state = VirtualMachine.PENDING
                     else:
                         self.log_error("Error updating VM status: %s" % new_vm)
-                except:
+                except Exception:
                     self.log_exception("Error updating VM status.")
-                    updated = False
+
+                if not success and self.creating:
+                    self.log_info("VM is in creation process, set pending state")
+                    state = VirtualMachine.PENDING
 
             # If we have problems to update the VM info too much time, set to
-            # unknown
-            if now - self.last_update > Config.VM_INFO_UPDATE_ERROR_GRACE_PERIOD:
+            # unknown unless we are still creating the VM
+            if now - self.last_update > Config.VM_INFO_UPDATE_ERROR_GRACE_PERIOD and not self.creating:
                 new_state = VirtualMachine.UNKNOWN
                 self.log_warn("Grace period to update VM info passed. Set state to 'unknown'")
             else:
@@ -725,7 +725,13 @@ class VirtualMachine(LoggerMixin):
             if self.ctxt_pid != self.WAIT_TO_PID:
                 ssh = self.get_ssh_ansible_master()
                 try:
-                    self.log_info("Killing ctxt process with pid: " + str(self.ctxt_pid))
+                    if not ssh.test_connectivity(5):
+                        self.log_info("Timeout killing ctxt process: %s." % self.ctxt_pid)
+                        self.ctxt_pid = None
+                        self.configured = False
+                        return
+
+                    self.log_info("Killing ctxt process with pid: %s" % self.ctxt_pid)
 
                     # Try to get PGID to kill all child processes
                     pgkill_success = False
