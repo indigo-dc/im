@@ -127,13 +127,13 @@
 #      shell: wget https://bootstrap.pypa.io/get-pip.py && python get-pip.py
 
     - name: Upgrade pip
-      pip: name=pip extra_args="-I" state=latest
+      pip: name=pip extra_args="-I" state=latest executable=pip2
 
     - name: Upgrade setuptools with Pip
-      pip: name=setuptools state=latest
+      pip: name=setuptools state=latest executable=pip2
 
     - name: Install pkgs with Pip in RH6
-      pip: name="{{ item.name }}" version="{{ item.version }}"
+      pip: name="{{ item.name }}" version="{{ item.version }}" executable=pip2
       when: ansible_os_family == "RedHat" and ansible_distribution_major_version|int <= 6
       with_items:
         - { name: 'pyyaml', version: '3.13' }
@@ -143,19 +143,19 @@
         - { name: 'xmltodict', version: '0.11.0' }
 
     - name: Install ansible with Pip
-      pip: name=ansible extra_args="-I"
+      pip: name=ansible extra_args="-I" executable=pip2
       when: ansible_os_family == "Suse" or (ansible_os_family == "Debian" and ansible_distribution != "Ubuntu") or ansible_distribution == "Fedora" or (ansible_os_family == "RedHat" and ansible_distribution_major_version|int < 7)
         
 #################################### Now install jmespath and scp and pywinrm with pip  ########################################
     - name: Install jmespath with Pip
-      pip: name=jmespath
+      pip: name=jmespath executable=pip2
         
     - name: Install scp with Pip
-      pip: name=scp
+      pip: name=scp executable=pip2
       when: ansible_os_family != "RedHat" or (ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 6)
 
     - name: Install pywinrm with Pip
-      pip: name=pywinrm
+      pip: name=pywinrm executable=pip2
       when: ansible_os_family != "RedHat" or (ansible_os_family == "RedHat" and ansible_distribution_major_version|int >= 6)
       ignore_errors: yes
 

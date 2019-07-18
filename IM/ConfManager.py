@@ -816,7 +816,11 @@ class ConfManager(LoggerMixin, threading.Thread):
                     if self.inf.radl.ansible_hosts:
                         configured_ok = True
                     else:
+                        if not self.inf.vm_master:
+                            raise Exception("No master VM found.")
                         ssh = self.inf.vm_master.get_ssh(retry=True)
+                        if not ssh:
+                            raise Exception("Master VM does not have IP.")
                         # Activate tty mode to avoid some problems with sudo in
                         # REL
                         ssh.tty = True
