@@ -1259,7 +1259,7 @@ configure step2 (
         infId = IM.CreateInfrastructure(str(radl), auth0, True)
         delay = int(time.time()) - before
 
-        self.assertLess(delay, 2)
+        self.assertLess(delay, 4)
 
         time.sleep(6)
 
