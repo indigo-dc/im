@@ -455,7 +455,11 @@ def RESTGetInfrastructureList():
         return return_error(401, "No authentication data provided")
 
     try:
-        inf_ids = InfrastructureManager.GetInfrastructureList(auth)
+        flt = None
+        if "filter" in bottle.request.params.keys():
+            flt = bottle.request.params.get("filter")
+
+        inf_ids = InfrastructureManager.GetInfrastructureList(auth, flt)
         res = []
 
         for inf_id in inf_ids:
@@ -597,7 +601,7 @@ def RESTGetVMProperty(infid=None, vmid=None, prop=None):
                 auth = sel_inf.auth.getAuthInfo("InfrastructureManager")[0]
                 imuser = auth['username']
                 impass = auth['password']
-                command = ('curl -s -H "Authorization: type = InfrastructureManager; '
+                command = ('curl --insecure -s -H "Authorization: type = InfrastructureManager; '
                            'username = %s; password = %s" -H "Accept: text/plain" %s' % (imuser, impass, url))
 
                 info = """
@@ -620,9 +624,9 @@ def RESTGetVMProperty(infid=None, vmid=None, prop=None):
                         sel_vm = vm
                         break
                 if not sel_vm:
-                    # this must never happen
-                    logger.error("Specified vmid in step2 is incorrect!!")
-                    info = None
+                    # it sometimes happen when the VM is in creation state
+                    logger.warn("Specified vmid in step2 is incorrect!!")
+                    info = "wait"
                 else:
                     ssh = sel_vm.get_ssh_ansible_master(retry=False)
 
