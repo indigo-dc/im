@@ -4,6 +4,7 @@ LABEL maintainer="Miguel Caballer <micafer1@upv.es>"
 LABEL version="1.8.5"
 LABEL description="Container image to run the IM service with TOSCA support. (http://www.grycap.upv.es/im)"
 EXPOSE 8899 8800
+ARG BRANCH=master
 
 # Ensure system is up to date with mandatory python packages installed
 RUN apt-get update && apt-get install --no-install-recommends -y openssh-client sshpass vim libmysqlclient20 && \
@@ -16,8 +17,8 @@ RUN apt-get update && apt-get install --no-install-recommends -y gcc git python 
      /usr/local/bin/pip install msrest msrestazure azure-common azure-mgmt-storage azure-mgmt-compute azure-mgmt-network azure-mgmt-resource azure-mgmt-dns azure-storage && \
      /usr/local/bin/pip install MySQL-python pycrypto cheroot xmltodict pymongo && \
      # install my version until the PR in upstream is accepted
-     cd /tmp && git clone https://github.com/micafer/libcloud --branch im && /usr/local/bin/pip install /tmp/libcloud && \
-     cd /tmp && git clone https://github.com/indigo-dc/im --branch v1.8.5 && /usr/local/bin/pip install /tmp/im && \
+     cd /tmp && git clone https://github.com/apache/libcloud && /usr/local/bin/pip install /tmp/libcloud && \
+     cd /tmp && git clone https://github.com/indigo-dc/im --branch $BRANCH && /usr/local/bin/pip install /tmp/im && \
      /usr/local/bin/pip uninstall pip -y && \
      apt-get purge -y gcc git python-dev python-pip libmysqld-dev libssl-dev libffi-dev libsqlite3-dev && \
      apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && rm -rf ~/.cache/
