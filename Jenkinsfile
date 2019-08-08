@@ -176,7 +176,7 @@ commands =
                 script {
                     dockerhub_image_id = DockerBuild(dockerhub_repo,
                                                      tag: env.BRANCH_NAME,
-                                                     build_dir: "docker-devel")
+                                                     build_dir: "docker")
                 }
             }
             post {
