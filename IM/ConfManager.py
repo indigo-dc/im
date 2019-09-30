@@ -366,8 +366,7 @@ class ConfManager(LoggerMixin, threading.Thread):
                 self.log_error("VM with ID %s (%s) does not have an IP!!. "
                                "We cannot launch the ansible process!!" % (str(vm.im_id), vm.id))
             else:
-                remote_dir = Config.REMOTE_CONF_DIR + "/" + \
-                    str(self.inf.id) + "/" + ip + "_" + str(vm.im_id)
+                remote_dir = Config.REMOTE_CONF_DIR + "/" + str(self.inf.id) + "/" + ip + "_" + str(vm.im_id)
                 tmp_dir = tempfile.mkdtemp()
 
                 self.log_info("Create the configuration file for the contextualization agent")
@@ -379,8 +378,7 @@ class ConfManager(LoggerMixin, threading.Thread):
                 # Copy the contextualization agent config file
                 ssh = vm.get_ssh_ansible_master()
                 ssh.sftp_mkdir(remote_dir)
-                ssh.sftp_put(conf_file, remote_dir + "/" +
-                             os.path.basename(conf_file))
+                ssh.sftp_put(conf_file, remote_dir + "/" + os.path.basename(conf_file))
 
                 if vm.configured is None:
                     if len(self.inf.get_vm_list()) > Config.VM_NUM_USE_CTXT_DIST:
