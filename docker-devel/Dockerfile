@@ -1,6 +1,6 @@
 # Dockerfile to create a container with the IM service
 FROM grycap/jenkins:ubuntu16.04-im
-MAINTAINER Miguel Caballer <micafer1@upv.es>
+LABEL maintainer="Miguel Caballer <micafer1@upv.es>"
 LABEL version="1.8.6"
 LABEL description="Container image to run the IM service with TOSCA support. (http://www.grycap.upv.es/im)"
 
