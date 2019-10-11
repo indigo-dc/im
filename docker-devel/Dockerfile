@@ -1,11 +1,11 @@
 # Dockerfile to create a container with the IM service
 FROM grycap/jenkins:ubuntu16.04-im
 MAINTAINER Miguel Caballer <micafer1@upv.es>
-LABEL version="1.8.5"
+LABEL version="1.8.6"
 LABEL description="Container image to run the IM service with TOSCA support. (http://www.grycap.upv.es/im)"
 
 # Install pip optional libraries
-RUN pip install tosca-parser MySQL-python msrest msrestazure azure-common azure-mgmt-storage azure-mgmt-compute azure-mgmt-network azure-mgmt-resource
+RUN pip install tosca-parser MySQL-python pyOpenSSL msrest msrestazure azure-common azure-mgmt-storage azure-mgmt-compute azure-mgmt-network azure-mgmt-resource
 # Install im indigo tosca fork branch 'devel'
 RUN cd tmp \
  && git clone --branch devel --recursive https://github.com/indigo-dc/im.git \
