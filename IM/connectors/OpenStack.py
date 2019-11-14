@@ -19,6 +19,7 @@ import time
 from netaddr import IPNetwork, IPAddress
 import os.path
 import tempfile
+from libcloud.common.exceptions import BaseHTTPError
 
 try:
     from libcloud.compute.types import Provider
@@ -334,6 +335,35 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
         return success
 
+    def setVolumesInfo(self, vm, node):
+        try:
+            cont = 1
+            if 'volumes_attached' in node.extra and node.extra['volumes_attached']:
+                for vol_info in node.extra['volumes_attached']:
+                    vol_id = vol_info['id']
+                    self.log_debug("Getting Volume info %s" % vol_id)
+                    volume = node.driver.ex_get_volume(vol_id)
+                    disk_size = vm.info.systems[0].getFeature("disk." + str(cont) + ".size").getValue('G')
+                    if disk_size and disk_size != volume.size:
+                        self.log_warn("Volume ID %s does not have the expected size %s != %s" % (vol_id,
+                                                                                                 volume.size,
+                                                                                                 disk_size))
+                        continue
+                    vm.info.systems[0].setValue("disk." + str(cont) + ".size", volume.size, 'G')
+
+                    disk_url = vm.info.systems[0].getValue("disk." + str(cont) + ".image.url")
+                    if disk_url and os.path.basename(disk_url) != vol_id:
+                        self.log_warn("Volume does not have the expected id %s != %s" % (vol_id,
+                                                                                         os.path.basename(disk_url)))
+                    vm.info.systems[0].setValue("disk." + str(cont) + ".image.url", "ost://%s/%s" % (self.cloud.server,
+                                                                                                     volume.id))
+                    if 'attachments' in volume.extra and volume.extra['attachments']:
+                        vm.info.systems[0].setValue("disk." + str(cont) + ".device",
+                                                    os.path.basename(volume.extra['attachments'][0]['device']))
+                    cont += 1
+        except Exception as ex:
+            self.log_warn("Error getting volume info: %s" % ex.args[0])
+
     def updateVMInfo(self, vm, auth_data):
         node = self.get_node_with_id(vm.id, auth_data)
         if node:
@@ -345,6 +375,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
             self.addRouterInstance(vm, node.driver)
             self.setIPsFromInstance(vm, node)
+            self.setVolumesInfo(vm, node)
         else:
             self.log_warn("Error updating the instance %s. VM not found." % vm.id)
             return (False, "Error updating the instance %s. VM not found." % vm.id)
@@ -423,6 +454,9 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 for ip in pool.list_floating_ips():
                     if ip.node_id == node.id:
                         ips.append(ip.ip_address)
+        except BaseHTTPError as ex:
+            if ex.code == 404:
+                self.log_warn("Error getting node floating ips. It seems that the site does not support them.")
         except Exception:
             self.log_exception("Error getting node floating ips")
         return ips
@@ -882,6 +916,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 system.getValue("disk." + str(cont) + ".image.url")):
             disk_url = system.getValue("disk." + str(cont) + ".image.url")
             disk_device = system.getValue("disk." + str(cont) + ".device")
+            disk_type = system.getValue("disk." + str(cont) + ".type")
             if disk_device:
                 disk_device = "vd%s" % disk_device[-1]
             disk_fstype = system.getValue("disk." + str(cont) + ".fstype")
@@ -909,6 +944,8 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                     'delete_on_termination': True,
                     'volume_size': disk_size
                 }
+                if disk_type:
+                    disk['volume_type'] = disk_type
             if disk_device:
                 disk['device_name'] = disk_device
             res.append(disk)
@@ -989,7 +1026,10 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             self.log_info("Creating node")
 
             vm = VirtualMachine(inf, None, self.cloud, radl, requested_radl, self.cloud.getCloudConnector(inf))
+            # to store the dynamically attached volumes
             vm.volumes = []
+            # to store the floating IPs not to be deleted
+            vm.floating_ips = []
             vm.destroy = True
             inf.add_vm(vm)
             cloud_init = self.get_cloud_init_data(radl, vm, public_key, user)
@@ -1121,9 +1161,14 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 self.log_info("No Floating IP assigned: %s" % msg)
                 return False, msg
 
+            found = False
             if node.driver.ex_list_floating_ip_pools():
                 if fixed_ip:
                     floating_ip = node.driver.ex_get_floating_ip(fixed_ip)
+                    if floating_ip:
+                        found = True
+                    else:
+                        return False, "Fixed IP %s not found." % fixed_ip
                 else:
                     # First try to check if there is a Float IP free to attach to the node
                     found, floating_ip = self.get_floating_ip(pool)
@@ -1140,28 +1185,31 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                             floating_ip.delete()
                             return False, "Error attaching a Floating IP to the node. Private IP returned."
 
-                    self.log_debug(floating_ip)
-                    # sometimes the ip cannot be attached inmediately
-                    # we have to try and wait
-                    cont = 0
-                    retries = 5
-                    delay = 5
-                    attached = False
-                    while not attached and cont < retries:
-                        try:
-                            node.driver.ex_attach_floating_ip_to_node(node, floating_ip)
-                            attached = True
-                        except Exception as atex:
-                            self.log_warn("Error attaching a Floating IP to the node: %s" % atex.args[0])
-                            cont += 1
-                            if cont < retries:
-                                time.sleep(delay)
+                self.log_debug(floating_ip)
+                # sometimes the ip cannot be attached inmediately
+                # we have to try and wait
+                cont = 0
+                retries = 5
+                delay = 5
+                attached = False
+                while not attached and cont < retries:
+                    try:
+                        node.driver.ex_attach_floating_ip_to_node(node, floating_ip)
+                        attached = True
+                    except Exception as atex:
+                        self.log_warn("Error attaching a Floating IP to the node: %s" % atex.args[0])
+                        cont += 1
+                        if cont < retries:
+                            time.sleep(delay)
 
-                    if not attached:
-                        self.log_error("Error attaching a Floating IP to the node.")
-                        self.log_info("We have created it, so release it.")
-                        floating_ip.delete()
-                        return False, "Error attaching a Floating IP to the node."
+                if not attached:
+                    self.log_error("Error attaching a Floating IP to the node.")
+                    self.log_info("We have created it, so release it.")
+                    floating_ip.delete()
+                    return False, "Error attaching a Floating IP to the node."
+
+                if found:
+                    vm.floating_ips.append(floating_ip.ip_address)
                 return True, floating_ip
             else:
                 self.log_error("No pools available.")
@@ -1604,3 +1652,35 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             self.log_exception("Error adding/removing new public IP")
             return (False, "Error adding/removing new public IP: " + str(ex))
         return True, ""
+
+    def delete_elastic_ips(self, node, vm):
+        """
+        remove the elastic IPs of a VM
+
+        Arguments:
+           - node(:py:class:`libcloud.compute.base.Node`): node object to attach the volumes.
+           - vm(:py:class:`IM.VirtualMachine`): VM information.
+        """
+        try:
+            no_delete_ips = []
+            if "floating_ips" in vm.__dict__.keys():
+                no_delete_ips = vm.floating_ips
+
+            for floating_ip in node.driver.ex_list_floating_ips():
+                if floating_ip.node_id == node.id:
+                    # remove it from the node
+                    try:
+                        node.driver.ex_detach_floating_ip_from_node(node, floating_ip)
+                    except Exception as ex:
+                        self.log_warn("Error detaching Floating IP: %s. %s" % (floating_ip.ip_address, ex.args[0]))
+                    # if it is in the list do not release it
+                    if floating_ip.ip_address in no_delete_ips:
+                        self.log_debug("Do not remove Floating IP: %s" % floating_ip.ip_address)
+                    else:
+                        self.log_debug("Remove Floating IP: %s" % floating_ip.ip_address)
+                        # delete the ip
+                        floating_ip.delete()
+            return True, ""
+        except Exception as ex:
+            self.log_exception("Error removing Floating IPs to VM ID: " + str(vm.id))
+            return False, "Error removing Floating IPs: %s" % ex.args[0]

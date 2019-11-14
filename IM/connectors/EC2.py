@@ -646,15 +646,16 @@ class EC2CloudConnector(CloudConnector):
         public_key = system.getValue("disk.0.os.credentials.public_key")
         private_key = system.getValue('disk.0.os.credentials.private_key')
         keypair_name = None
-        if private_key and public_key:
-            # We assume that if the name key is shorter than 128 is a keypair name
-            if len(public_key) < 128:
-                keypair_name = public_key
 
         if not public_key:
             # We must generate them
             (public_key, private_key) = self.keygen()
             system.setValue('disk.0.os.credentials.private_key', private_key)
+
+        # We assume that if the name key is shorter than 128 is a keypair name
+        if len(public_key) < 128:
+            keypair_name = public_key
+            public_key = None
 
         user = system.getValue('disk.0.os.credentials.username')
         if not user:
@@ -1424,8 +1425,13 @@ class EC2CloudConnector(CloudConnector):
             if sg.description != "Security group created by the IM":
                 self.log_info("SG %s not created by the IM. Do not delete it." % sg.name)
                 continue
-            for instance in sg.instances():
-                instance.modify_attribute("groupSet", [def_sg_id])
+            try:
+                for instance in sg.instances():
+                    instance.modify_attribute("groupSet", [def_sg_id])
+            except Exception as ex:
+                self.log_warn("Error removing the SG %s from the instance: %s. %s" % (sg.name, instance.id, ex))
+                # try to wait some seconds to free the SGs
+                time.sleep(5)
 
             self.log_info("Remove the SG: " + sg.name)
             try:
