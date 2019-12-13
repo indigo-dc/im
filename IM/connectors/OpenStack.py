@@ -195,30 +195,16 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         """
         instance_type_name = radl.getValue('instance_type')
 
-        cpu = 1
-        cpu_op = ">="
-        if radl.getFeature('cpu.count'):
-            cpu = radl.getValue('cpu.count')
-            cpu_op = radl.getFeature('cpu.count').getLogOperator()
-
-        memory = 1
-        memory_op = ">="
-        if radl.getFeature('memory.size'):
-            memory = radl.getFeature('memory.size').getValue('M')
-            memory_op = radl.getFeature('memory.size').getLogOperator()
-        disk_free = 0
-        disk_free_op = ">="
-        if radl.getValue('disks.free_size'):
-            disk_free = radl.getFeature('disks.free_size').getValue('G')
-            disk_free_op = radl.getFeature('disks.free_size').getLogOperator()
+        (cpu, cpu_op, memory, memory_op, disk_free, disk_free_op) = self.get_instance_selectors(radl, disk_unit="G")
 
         # get the node size with the lowest price, vcpus, memory and disk
         sizes.sort(key=lambda x: (x.price, x.vcpus, x.ram, x.disk))
         for size in sizes:
-            str_compare = "size.ram " + memory_op + " memory"
-            str_compare += " and size.vcpus " + cpu_op + " cpu "
-            str_compare += " and size.disk " + disk_free_op + " disk_free"
-            if eval(str_compare):
+            comparison = cpu_op(size.vcpus, cpu)
+            comparison = comparison and memory_op(size.ram, memory)
+            comparison = comparison and disk_free_op(size.disk, disk_free)
+
+            if comparison:
                 if not instance_type_name or size.name == instance_type_name:
                     return size
 
@@ -470,6 +456,14 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
            - node(:py:class:`libcloud.compute.base.Node`): object to connect to EC2 instance.
         """
 
+        # First remove old
+        system = vm.info.systems[0]
+        cont = 0
+        while system.getValue('net_interface.%d.connection' % cont):
+            if system.getValue('net_interface.%d.ip' % cont):
+                system.delValue('net_interface.%d.ip' % cont)
+            cont += 1
+
         if 'addresses' in node.extra:
             public_ips = []
             ip_net_map = {}
@@ -495,7 +489,6 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
 
             map_nets = self.map_radl_ost_networks(vm, ip_net_map)
 
-            system = vm.info.systems[0]
             i = 0
             ips_assigned = []
             while system.getValue("net_interface." + str(i) + ".connection"):
@@ -558,8 +551,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         if instance_type:
             LibCloudCloudConnector.update_system_info_from_instance(system, instance_type)
             if instance_type.vcpus:
-                system.addFeature(
-                    Feature("cpu.count", "=", instance_type.vcpus), conflict="me", missing="other")
+                system.addFeature(Feature("cpu.count", "=", instance_type.vcpus), conflict="me", missing="other")
 
     @staticmethod
     def get_ost_net(driver, name=None, netid=None):
@@ -1095,7 +1087,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
         while vm.getRequestedSystem().getValue("net_interface." + str(n) + ".connection"):
             net_conn = vm.getRequestedSystem().getValue('net_interface.' + str(n) + '.connection')
             net = vm.info.get_network_by_id(net_conn)
-            if net.isPublic():
+            if net and net.isPublic():
                 fixed_ip = vm.getRequestedSystem().getValue("net_interface." + str(n) + ".ip")
                 pool_name = net.getValue("provider_id")
                 requested_ips.append((fixed_ip, pool_name))
@@ -1617,6 +1609,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             current_public_ip = vm.getPublicIP()
             new_has_public_ip = radl.hasPublicNet(vm.info.systems[0].name)
             if new_has_public_ip and not current_public_ip:
+                self.log_info("Adding Public IP.")
                 for net in radl.networks:
                     if net.isPublic():
                         new_public_net = net.clone()
@@ -1628,22 +1621,13 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                 return self.add_elastic_ip_from_pool(vm, node, None, pool_name)
 
             if not new_has_public_ip and current_public_ip:
-                floating_ip = node.driver.get_floating_ip(current_public_ip)
+                floating_ip = node.driver.ex_get_floating_ip(current_public_ip)
+                self.log_info("Removing Public IP: %s." % floating_ip)
                 if node.driver.ex_detach_floating_ip_from_node(node, floating_ip):
                     floating_ip.delete()
 
                     # Remove all public net connections in the Requested RADL
-                    nets_id = [net.id for net in vm.requested_radl.networks if net.isPublic()]
-                    system = vm.requested_radl.systems[0]
-
-                    i = 0
-                    while system.getValue('net_interface.%d.connection' % i):
-                        f = system.getFeature("net_interface.%d.connection" % i)
-                        if f.value in nets_id:
-                            system.delValue('net_interface.%d.connection' % i)
-                            if system.getValue('net_interface.%d.ip' % i):
-                                system.delValue('net_interface.%d.ip' % i)
-                        i += 1
+                    vm.delete_public_nets(vm.requested_radl)
 
                     return True, ""
                 else:
