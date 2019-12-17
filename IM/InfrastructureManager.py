@@ -643,22 +643,36 @@ class InfrastructureManager:
                     random_password = ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(8))
                     vm.info.systems[0].setCredentialValues(password=random_password, new=True)
 
+        error_msg = ""
         # Add the new virtual machines to the infrastructure
         sel_inf.update_radl(radl, [(d, deployed_vm[d], concrete_systems[d.cloud_id][d.id][0]) for d in deployed_vm])
         if all_failed:
             InfrastructureManager.logger.error("VMs failed when adding to Inf ID: %s" % sel_inf.id)
             sel_inf.add_cont_msg("All VMs failed. No contextualize.")
+
+            # in case of all VMs are failed delete it
+            delete_list = list(reversed(sel_inf.get_vm_list()))
+            for vm in new_vms:
+                if vm.error_msg:
+                    error_msg += "%s\n" % vm.error_msg
+                vm.delete(delete_list, auth, [])
         else:
             InfrastructureManager.logger.info("VMs %s successfully added to Inf ID: %s" % (new_vms, sel_inf.id))
 
         # The resources has been added
-        sel_inf.adding = False
+        sel_inf.set_adding(False)
 
         # Let's contextualize!
         if context and new_vms and not all_failed:
             sel_inf.Contextualize(auth)
 
         IM.InfrastructureList.InfrastructureList.save_data(inf_id)
+
+        if all_failed and new_vms:
+            # if there are no VMs, set it as unconfigured
+            if not sel_inf.get_vm_list():
+                sel_inf.configured = False
+            raise Exception("Error adding VMs: %s" % error_msg)
 
         return [vm.im_id for vm in new_vms]
 
@@ -976,6 +990,9 @@ class InfrastructureManager:
             else:
                 state = VirtualMachine.UNKNOWN
 
+        if sel_inf.deleting:
+            state = VirtualMachine.DELETING
+
         InfrastructureManager.logger.info("Inf ID: " + str(inf_id) + " is in state: " + state)
         return {'state': state, 'vm_states': vm_states}
 
@@ -1206,7 +1223,7 @@ class InfrastructureManager:
             return ""
 
     @staticmethod
-    def DestroyInfrastructure(inf_id, auth, force=False):
+    def DestroyInfrastructure(inf_id, auth, force=False, async_call=False):
         """
         Destroy all virtual machines in an infrastructure.
 
@@ -1215,6 +1232,7 @@ class InfrastructureManager:
         - inf_id(str): infrastructure id.
         - auth(Authentication): parsed authentication tokens.
         - force(bool): delete the infra from the IM although not all resources are deleted.
+        - async_call(bool): Destroy the inf in an async way.
 
         Return: None.
         """
@@ -1224,23 +1242,18 @@ class InfrastructureManager:
         # First check the auth data
         auth = InfrastructureManager.check_auth_data(auth)
 
-        InfrastructureManager.logger.info("Destroying the Inf ID: " + str(inf_id))
-
         sel_inf = InfrastructureManager.get_infrastructure(inf_id, auth)
-        try:
-            sel_inf.set_deleting()
-            # First stop ctxt processes
-            sel_inf.stop()
-            # Destroy the Infrastructure
-            sel_inf.destroy(auth)
-        except Exception as ex:
-            if not force:
-                raise ex
-        # Set the Infrastructure as deleted
-        sel_inf.delete()
-        IM.InfrastructureList.InfrastructureList.save_data(inf_id)
-        IM.InfrastructureList.InfrastructureList.remove_inf(sel_inf)
-        InfrastructureManager.logger.info("Inf ID: %s: Successfully destroyed" % inf_id)
+        # First set this infra as "deleting"
+        sel_inf.set_deleting()
+
+        if async_call:
+            t = threading.Thread(name="DestroyResource-%s" % sel_inf.id,
+                                 target=sel_inf.destroy,
+                                 args=(auth, force))
+            t.daemon = True
+            t.start()
+        else:
+            sel_inf.destroy(auth, force)
         return ""
 
     @staticmethod

@@ -1,9 +1,28 @@
+# IM - Infrastructure Manager
+# Copyright (C) 2011 - GRyCAP - Universitat Politecnica de Valencia
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 import logging
-import subprocess
-import shutil
-import tempfile
+import operator
 import time
 import yaml
+
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
+
 from radl.radl import Feature
 from IM.config import Config
 from IM.LoggerMixin import LoggerMixin
@@ -18,6 +37,8 @@ class CloudConnector(LoggerMixin):
             - cloud_info(:py:class:`IM.CloudInfo`): Data about the Cloud Provider
     """
 
+    OPERATORSMAP = {"<": operator.lt, "<=": operator.le, "=": operator.eq,
+                    ">=": operator.ge, ">": operator.gt, "==": operator.eq}
     type = "BaseClass"
     """str with the name of the provider."""
 
@@ -45,7 +66,7 @@ class CloudConnector(LoggerMixin):
                 import requests.packages
                 from requests.packages.urllib3.exceptions import InsecureRequestWarning
                 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
-            except:
+            except Exception:
                 pass
 
     def concreteSystem(self, radl_system, auth_data):
@@ -305,36 +326,24 @@ class CloudConnector(LoggerMixin):
         """
         raise NotImplementedError("Should have implemented this")
 
-    def keygen(self):
+    @staticmethod
+    def keygen():
         """
-        Generates a keypair using the ssh-keygen command and returns a tuple (public, private)
+        Generates a keypair using the cryptography lib and returns a tuple (public, private)
         """
-        tmp_dir = tempfile.mkdtemp()
-        pk_file = tmp_dir + "/im-ssh-key"
-        command = ['ssh-keygen', '-t', 'rsa', '-b', '2048', '-q', '-N', '', '-f', pk_file]
-        p = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        (out, err) = p.communicate()
-        if p.returncode != 0:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            self.log_error("Error executing ssh-keygen: " + out + err)
-            return (None, None)
-        else:
-            public = None
-            private = None
-            try:
-                with open(pk_file) as f:
-                    private = f.read().strip()
-            except:
-                self.log_exception("Error reading private_key file.")
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048,
+                                       backend=default_backend())
 
-            try:
-                with open(pk_file + ".pub") as f:
-                    public = f.read().strip()
-            except:
-                self.log_exception("Error reading public_key file.")
+        private = key.private_bytes(encoding=serialization.Encoding.PEM,
+                                    format=serialization.PrivateFormat.TraditionalOpenSSL,
+                                    encryption_algorithm=serialization.NoEncryption()
+                                    ).decode()
 
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            return (public, private)
+        public = key.public_key().public_bytes(encoding=serialization.Encoding.OpenSSH,
+                                               format=serialization.PublicFormat.OpenSSH
+                                               ).decode()
+
+        return (public, private)
 
     def delete_snapshots(self, vm, auth_data):
         """
@@ -442,3 +451,28 @@ class CloudConnector(LoggerMixin):
         if not mask:
             mask = "10.0.0.0/16"
         return mask
+
+    @staticmethod
+    def get_instance_selectors(system, mem_unit="M", disk_unit="M"):
+        cpu = 1
+        cpu_op_str = ">="
+        if system.getFeature('cpu.count'):
+            cpu = system.getValue('cpu.count')
+            cpu_op_str = system.getFeature('cpu.count').getLogOperator()
+        cpu_op = CloudConnector.OPERATORSMAP.get(cpu_op_str)
+
+        memory = 0
+        memory_op_str = ">="
+        if system.getFeature('memory.size'):
+            memory = system.getFeature('memory.size').getValue(mem_unit)
+            memory_op_str = system.getFeature('memory.size').getLogOperator()
+        memory_op = CloudConnector.OPERATORSMAP.get(memory_op_str)
+
+        disk_free = 0
+        disk_free_op_str = ">="
+        if system.getValue('disks.free_size'):
+            disk_free = system.getFeature('disks.free_size').getValue(disk_unit)
+            disk_free_op_str = system.getFeature('disks.free_size').getLogOperator()
+        disk_free_op = CloudConnector.OPERATORSMAP.get(disk_free_op_str)
+
+        return (cpu, cpu_op, memory, memory_op, disk_free, disk_free_op)

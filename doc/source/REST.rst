@@ -161,8 +161,8 @@ GET ``http://imserver.com/infrastructures/<infId>/<property_name>``
                  (the virtual infrastructure will not be modified).
       :``state``: a JSON object with two elements:
       
-         :``state``: a string with the aggregated state of the infrastructure. 
-         :``vm_states``: a dict indexed with the VM ID and the value the VM state.
+         :``state``: a string with the aggregated state of the infrastructure (see list of valid states in :ref:`IM-States`).
+         :``vm_states``: a dict indexed with the VM ID and the value the VM state (see list of valid states in :ref:`IM-States`).
 
    The result is JSON format has the following format::
    
@@ -241,7 +241,7 @@ PUT ``http://imserver.com/infrastructures/<infId>/reconfigure``
    If the operation has been performed successfully the return value is an empty string.
 
 DELETE ``http://imserver.com/infrastructures/<infId>``
-   :input fields: ``force`` (optional)
+   :input fields: ``force`` (optional), ``async`` (optional)
    :Response Content-type: text/plain or application/json
    :ok response: 200 OK
    :fail response: 401, 403, 404, 400
@@ -250,7 +250,8 @@ DELETE ``http://imserver.com/infrastructures/<infId>``
    ``infId``. If the operation has been performed successfully 
    The ``force`` parameter is optional and is a flag to specify that the infra
    will be from the IM although not all resources are deleted.
-   The return value is an empty string.
+   The return value is an empty string. If ``async`` is set to ``True``
+   the call will not wait the infrastructure to be deleted.
 
 GET ``http://imserver.com/infrastructures/<infId>/vms/<vmId>``
    :Response Content-type: text/plain or application/json

@@ -340,16 +340,11 @@ class TestIM(unittest.TestCase):
         auth0 = self.getAuth([0], [], [("Dummy", 0)])
         infId = IM.CreateInfrastructure("", auth0)
 
-        vms = IM.AddResource(infId, str(radl), auth0)
+        with self.assertRaises(Exception) as ex:
+            vms = IM.AddResource(infId, str(radl), auth0)
 
-        self.assertEqual(vms, [0])
-
-        res = IM.GetInfrastructureState(infId, auth0)
-        self.assertEqual(res['state'], VirtualMachine.FAILED)
-
-        res = IM.GetVMContMsg(infId, 0, auth0)
-        self.assertEqual(res, ("Error launching the VMs of type s0 to cloud ID cloud0 of type Dummy."
-                               " No username for deploy: s0\n"))
+        self.assertEqual(str(ex.exception), ("Error adding VMs: Error launching the VMs of type s0 "
+                                             "to cloud ID cloud0 of type Dummy. No username for deploy: s0\n"))
 
         IM.DestroyInfrastructure(infId, auth0)
 
@@ -736,6 +731,7 @@ class TestIM(unittest.TestCase):
         inf.id = "1"
         inf.auth = auth0
         inf.deleted = False
+        inf.deleting = False
         inf.has_expired.return_value = False
         vm1 = MagicMock()
         vm1.im_id = 0
@@ -1283,11 +1279,28 @@ configure step2 (
         auth0 = self.getAuth([0])
         infId = IM.CreateInfrastructure("", auth0)
         inf = IM.get_infrastructure(infId, auth0)
-        inf.destroy = Mock(side_effect=Exception())
+        inf.destroy_vms = Mock(side_effect=Exception())
         with self.assertRaises(Exception):
             IM.DestroyInfrastructure(infId, auth0)
         self.assertEqual(inf.deleted, False)
         IM.DestroyInfrastructure(infId, auth0, True)
+        self.assertEqual(inf.deleted, True)
+
+    def sleep_5(self, _):
+        time.sleep(5)
+
+    def test_inf_delete_async(self):
+        """ DestroyInfrastructure async """
+
+        auth0 = self.getAuth([0])
+        infId = IM.CreateInfrastructure("", auth0)
+        inf = IM.get_infrastructure(infId, auth0)
+        inf.destroy_vms = Mock(side_effect=self.sleep_5)
+        IM.DestroyInfrastructure(infId, auth0, False, True)
+        self.assertEqual(inf.deleted, False)
+        state = IM.GetInfrastructureState(infId, auth0)
+        self.assertEqual(state["state"], VirtualMachine.DELETING)
+        time.sleep(10)
         self.assertEqual(inf.deleted, True)
 
     def test_boot_modes(self):
