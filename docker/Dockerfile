@@ -1,7 +1,7 @@
 # Dockerfile to create a container with the IM service
 FROM ubuntu:18.04
 LABEL maintainer="Miguel Caballer <micafer1@upv.es>"
-LABEL version="1.9.0"
+LABEL version="1.9.1"
 LABEL description="Container image to run the IM service with TOSCA support. (http://www.grycap.upv.es/im)"
 EXPOSE 8899 8800
 ARG BRANCH=master
