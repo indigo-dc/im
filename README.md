@@ -35,6 +35,9 @@ Please acknowledge the use of this software in your scientific publications by i
 
 Miguel Caballer, Ignacio Blanquer, German Molto, and Carlos de Alfonso. "[Dynamic management of virtual infrastructures](https://link.springer.com/article/10.1007/s10723-014-9296-5)". Journal of Grid Computing, Volume 13, Issue 1, Pages 53-70, 2015, ISSN 1570-7873, DOI: 10.1007/s10723-014-9296-5.
 
+This work is co-funded by the [EOSC-hub project](http://eosc-hub.eu/) (Horizon 2020) under Grant number 777536.
+<img src="https://wiki.eosc-hub.eu/download/attachments/1867786/eu%20logo.jpeg?version=1&modificationDate=1459256840098&api=v2" height="24">
+<img src="https://wiki.eosc-hub.eu/download/attachments/18973612/eosc-hub-web.png?version=1&modificationDate=1516099993132&api=v2" height="24">
 
 ## 1 DOCKER IMAGE
 
