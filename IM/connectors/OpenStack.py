@@ -399,6 +399,9 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                                 # the ip not matches the is_public value
                                 if ip not in res["#UNMAPPED#"]:
                                     res["#UNMAPPED#"].append(ip)
+                    elif net_cidr and "*" in net_cidr:
+                        # in this case the net is not connected to this VM
+                        continue
                     elif net_cidr and IPAddress(ip) in IPNetwork(net_cidr):
                         res[radl_net.id] = ip
                         radl_net.setValue('provider_id', net_name)
@@ -456,14 +459,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
            - vm(:py:class:`IM.VirtualMachine`): VM information.
            - node(:py:class:`libcloud.compute.base.Node`): object to connect to EC2 instance.
         """
-
-        # First remove old
         system = vm.info.systems[0]
-        cont = 0
-        while system.getValue('net_interface.%d.connection' % cont):
-            if system.getValue('net_interface.%d.ip' % cont):
-                system.delValue('net_interface.%d.ip' % cont)
-            cont += 1
 
         if 'addresses' in node.extra:
             public_ips = []
@@ -493,6 +489,9 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
             i = 0
             ips_assigned = []
             while system.getValue("net_interface." + str(i) + ".connection"):
+                # First remove old
+                if system.getValue('net_interface.%d.ip' % i):
+                    system.delValue('net_interface.%d.ip' % i)
                 net_name = system.getValue("net_interface." + str(i) + ".connection")
                 if net_name in map_nets:
                     ip = map_nets[net_name]
@@ -534,7 +533,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                     private_ips.append(ip)
                 else:
                     public_ips.append(ip)
-            vm.setIps(public_ips, private_ips)
+            vm.setIps(public_ips, private_ips, True)
 
         if vm.state == VirtualMachine.RUNNING:
             if self.add_public_ip_count < self.MAX_ADD_IP_COUNT:
@@ -736,6 +735,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                     # First check if the net already exists
                     if self.get_ost_net(driver, name=ost_net_name):
                         network.setValue('provider_id', ost_net_name)
+                        network.delValue('cidr')
                         self.log_debug("Ost network %s exists. Do not create." % ost_net_name)
                         continue
 
@@ -748,6 +748,7 @@ class OpenStackCloudConnector(LibCloudCloudConnector):
                             self.log_error("No free net CIDR found.")
                             raise Exception("No net CIDR specified nor free net CIDR found.")
                         self.log_debug("Free net CIDR found: %s." % net_cidr)
+                        network.setValue('cidr', net_cidr)
                     net_dnsserver = network.getValue('dnsserver')
                     if net_dnsserver:
                         net_dnsserver = [net_dnsserver]
