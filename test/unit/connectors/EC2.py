@@ -163,6 +163,7 @@ class TestEC2Connector(TestCloudConnectorBase):
 
         inf = InfrastructureInfo()
         inf.auth = auth
+        inf.radl = radl
         res = ec2_cloud.launch(inf, radl, radl, 1, auth)
         success, _ = res[0]
         self.assertTrue(success, msg="ERROR: launching a VM.")
@@ -177,6 +178,7 @@ class TestEC2Connector(TestCloudConnectorBase):
             network net1 (outbound = 'yes' and outports='8080')
             network net2 (create='yes' and cidr='10.0.10.0/24')
             network net3 (create='yes' and cidr='10.0.*.0/24')
+            network net4 (create='yes' and cidr='10.0.*.0/24')
             system test (
             cpu.arch='x86_64' and
             cpu.count>=1 and
@@ -207,6 +209,7 @@ class TestEC2Connector(TestCloudConnectorBase):
 
         inf = InfrastructureInfo()
         inf.auth = auth
+        inf.radl = radl
         res = ec2_cloud.launch(inf, radl, radl, 1, auth)
         success, _ = res[0]
         self.assertTrue(success, msg="ERROR: launching a VM.")
@@ -214,6 +217,7 @@ class TestEC2Connector(TestCloudConnectorBase):
         self.assertEquals(image.run.call_args_list[1][1]["instance_type"], "t3a.micro")
         self.assertEquals(conn.create_subnet.call_args_list[0][0], ('vpc-id', '10.0.10.0/24'))
         self.assertEquals(conn.create_subnet.call_args_list[1][0], ('vpc-id', '10.0.2.0/24'))
+        self.assertEquals(conn.create_subnet.call_args_list[2][0], ('vpc-id', '10.0.3.0/24'))
 
         self.assertNotIn("ERROR", self.log.getvalue(), msg="ERROR found in log: %s" % self.log.getvalue())
 

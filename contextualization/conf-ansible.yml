@@ -30,6 +30,12 @@
       changed_when: python_install.stdout_lines|length > 1
       when: python_exists is failed
 
+     # In some cases python link is not created
+    - name: Link python 2 or 3 in case is needed
+      raw: ls /usr/bin/python || { ls /usr/bin/python2 && ln -s /usr/bin/python2 /usr/bin/python; } || { ls /usr/bin/python3 && ln -s /usr/bin/python3 /usr/bin/python; }
+      become: yes
+      ignore_errors: yes
+
     - name: Get Facts
       setup:
 
@@ -85,8 +91,7 @@
       zypper: name=python,python-pip,gcc,python-devel,wget,libffi-devel,openssl-devel,python-cryptography,make state=present
       when: ansible_os_family == "Suse"
 
-#    - name: Install Pip (alternative)
-#      shell: wget https://bootstrap.pypa.io/get-pip.py && python get-pip.py creates=/usr/local/bin/pip
+  ######################################### Use pip to enable to set the version #############################################
 
     # do not upgrade to 10 as it is failing
     - name: Upgrade pip
