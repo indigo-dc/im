@@ -43,7 +43,7 @@ This work is co-funded by the [EOSC-hub project](http://eosc-hub.eu/) (Horizon 2
 
 The recommended option to use the Infrastructure Manager service is using the available docker image.
 A Docker image named `indigodatacloud/im` has been created to make easier the deployment of an IM service using the
-default configuration. Information about this image can be found here: https://registry.hub.docker.com/u/indigodatacloud/im/.
+default configuration. Information about this image can be found here: https://hub.docker.com/u/indigodatacloud/im/.
 
 How to launch the IM service using docker::
 
