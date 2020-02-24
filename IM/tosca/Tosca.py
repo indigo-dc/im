@@ -181,16 +181,17 @@ class Tosca:
 
         # in case of an AddResource
         # first process already deployed VMs
-        systems = [[], []]
+        systems = [(None, []), (radl, [])]
         if inf_info:
+            systems[0] = (inf_info.radl, [])
             for elem in inf_info.get_vm_list_by_system_name().items():
-                systems[0].append(elem[1][-1].info.systems[0])
+                systems[0][1].append(elem[1][-1].info.systems[0])
 
         # make that deployed nodes are checked first
         to_deploy = [d.id for d in radl.deploys]
-        systems[1] = [s for s in radl.systems if s.name in to_deploy]
+        systems[1][1].extend([s for s in radl.systems if s.name in to_deploy])
 
-        for s1 in systems:
+        for r1, s1 in systems:
             for s in s1:
                 image = s.getValue("disk.0.image.url")
 
@@ -199,7 +200,7 @@ class Tosca:
                     protocol = url[0]
                     src_host = url[1].split(':')[0]
                     for net_id in s.getNetworkIDs():
-                        net = radl.get_network_by_id(net_id)
+                        net = r1.get_network_by_id(net_id)
                         if not net.isPublic():
                             if net_id in priv_net_cloud_map:
                                 if priv_net_cloud_map[net_id] != "%s://%s" % (protocol, src_host):
@@ -392,8 +393,7 @@ class Tosca:
                 system.setValue('net_interface.%d.connection' % num, net_name)
                 # This is not a normative property
                 if dns_name:
-                    system.setValue('net_interface.%d.dns_name' %
-                                    num, dns_name)
+                    system.setValue('net_interface.%d.dns_name' % num, dns_name)
                 if ip:
                     system.setValue('net_interface.%d.ip' % num, ip)
 
@@ -1390,7 +1390,17 @@ class Tosca:
                 link = None
                 for requires in port.requirements:
                     binding = requires.get('binding', binding)
+                    if isinstance(binding, dict):
+                        if "node" in binding:
+                            binding = binding["node"]
+                        else:
+                            raise Exception("Incorrect binding in Port node %s" % node.name)
                     link = requires.get('link', link)
+                    if isinstance(link, dict):
+                        if "node" in link:
+                            link = link["node"]
+                        else:
+                            raise Exception("Incorrect link in Port node %s" % node.name)
 
                 if binding == node.name:
                     ip = self._final_function_result(port.get_property_value('ip_address'), port)
