@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y gcc git python3
      /usr/local/bin/pip3 install pyOpenSSL pycrypto cheroot xmltodict pymongo ansible==2.7.13 && \
      # Install my version until the PR #1412 is accepted
      cd /tmp && git clone https://github.com/micafer/libcloud --branch=im && /usr/local/bin/pip3 install /tmp/libcloud && \
-     cd /tmp && git clone https://github.com/indigo-dc/im --branch $BRANCH && /usr/local/bin/pip install /tmp/im && \
+     cd /tmp && git clone https://github.com/indigo-dc/im --branch $BRANCH && /usr/local/bin/pip3 install /tmp/im && \
      /usr/local/bin/pip3 uninstall pip -y && \
      apt-get purge -y gcc git libssl-dev libffi-dev libsqlite3-dev python3-dev python3-pip && \
      apt-get autoremove -y && apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && rm -rf ~/.cache/
