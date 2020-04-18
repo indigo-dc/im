@@ -26,7 +26,7 @@ from cryptography.hazmat.primitives import serialization
 from radl.radl import Feature
 from IM.config import Config
 from IM.LoggerMixin import LoggerMixin
-from netaddr import IPNetwork
+from netaddr import IPNetwork, spanning_cidr
 
 
 class CloudConnector(LoggerMixin):
@@ -41,6 +41,7 @@ class CloudConnector(LoggerMixin):
                     ">=": operator.ge, ">": operator.gt, "==": operator.eq}
     type = "BaseClass"
     """str with the name of the provider."""
+    DEFAULT_NET_CIDR = "10.0.*.0/24"
 
     def __init__(self, cloud_info, inf):
         self.cloud = cloud_info
@@ -442,23 +443,25 @@ class CloudConnector(LoggerMixin):
         """
         Get a common CIDR in all the RADL nets
         """
-        mask = None
+        nets = []
         for num, net in enumerate(radl.networks):
             provider_id = net.getValue('provider_id')
             if net.getValue('create') == 'yes' and not net.isPublic() and not provider_id:
-                net_cidr = net.getValue('cidr').replace("*", str(num + 1))
-                if net_cidr:
-                    if mask:
-                        if not IPNetwork(net_cidr) in IPNetwork(mask):
-                            raise Exception("Net cidr %s not in common cidr %s" % (net_cidr, mask))
-                    else:
-                        for m in Config.PRIVATE_NET_MASKS:
-                            if IPNetwork(net_cidr) in IPNetwork(m):
-                                mask = m
-                                break
-        if not mask:
-            mask = "10.0.0.0/16"
-        return mask
+                net_cidr = net.getValue('cidr')
+                if not net_cidr:
+                    net_cidr = CloudConnector.DEFAULT_NET_CIDR
+                net_cidr_0 = IPNetwork(net_cidr.replace("*", "0"))
+                if net_cidr_0 not in nets:
+                    nets.append(net_cidr_0)
+                net_cidr = IPNetwork(net_cidr.replace("*", str(num + 1)))
+                nets.append(net_cidr)
+
+        if len(nets) == 0:  # there is no CIDR return the default one
+            return "10.0.0.0/16"
+        elif len(nets) == 1:  # there is only one, return it
+            return nets[0]
+        else:  # there are more, get the common CIDR
+            return str(spanning_cidr(nets))
 
     @staticmethod
     def get_instance_selectors(system, mem_unit="M", disk_unit="M"):
@@ -515,7 +518,7 @@ class CloudConnector(LoggerMixin):
         Get a CIDR that is not used (is not in used_cidrs list)
         """
         if not net_cidr:
-            net_cidr = "10.*.*.0/24"
+            net_cidr = CloudConnector.DEFAULT_NET_CIDR
 
         if "*" not in net_cidr:
             return net_cidr
@@ -524,10 +527,20 @@ class CloudConnector(LoggerMixin):
 
         # add current used cidrs in other inf networks
         if inf:
+            # Add the general RADL nets
             for net in inf.radl.networks:
                 cidr = net.getValue('cidr')
                 if cidr and "*" not in cidr:
                     used_cidr_nets.append(IPNetwork(cidr))
+
+            # and the nets from the VMs
+            # Use direct access to the list to avoid lock
+            for vm in inf.vm_list:
+                for net in vm.info.networks:
+                    print(net)
+                    cidr = net.getValue('cidr')
+                    if cidr and "*" not in cidr:
+                        used_cidr_nets.append(IPNetwork(cidr))
 
         for cidr in CloudConnector.cidr_wildcard_iterator(net_cidr):
             if not any([IPNetwork(cidr) in IPNetwork(mask) for mask in used_cidr_nets]):

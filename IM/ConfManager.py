@@ -233,7 +233,7 @@ class ConfManager(LoggerMixin, threading.Thread):
             self.log_info("Killing ctxt processes in VM: %s" % vm.id)
             try:
                 vm.kill_check_ctxt_process()
-            except:
+            except Exception:
                 self.log_exception("Error killing ctxt processes in VM: %s" % vm.id)
             vm.configured = None
 
@@ -404,7 +404,7 @@ class ConfManager(LoggerMixin, threading.Thread):
                     vm.launch_check_ctxt_process()
                 else:
                     self.log_warn("Ansible process to configure " + str(vm.im_id) + " NOT launched")
-        except:
+        except Exception:
             pid = None
             self.log_exception("Error launching the ansible process to configure VM with ID %s" % str(vm.im_id))
         finally:
@@ -443,14 +443,7 @@ class ConfManager(LoggerMixin, threading.Thread):
         vm_group = self.inf.get_vm_list_by_system_name()
         for group in vm_group:
             vm = vm_group[group][0]
-            user = vm.getCredentialValues()[0]
             out.write('[' + group + ':vars]\n')
-            if user:
-                out.write('ansible_user=' + user + '\n')
-                # For compatibility with Ansible 1.X versions
-                out.write('ansible_ssh_user=' + user + '\n')
-            else:
-                self.log_warn("The VM ID: " + str(vm.id) + " does not have username!!")
 
             if vm.getOS().lower() == "windows":
                 out.write('ansible_connection=winrm\n')
@@ -516,6 +509,14 @@ class ConfManager(LoggerMixin, threading.Thread):
                 node_line += ' ansible_port=%d' % vm.getRemoteAccessPort()
                 # For compatibility with Ansible 1.X versions
                 node_line += ' ansible_ssh_port=%d' % vm.getRemoteAccessPort()
+
+                user = vm.getCredentialValues()[0]
+                if user:
+                    node_line += ' ansible_user=%s' % user
+                    # For compatibility with Ansible 1.X versions
+                    node_line += ' ansible_ssh_user=%s' % user
+                else:
+                    self.log_warn("The VM ID: " + str(vm.id) + " does not have username!!")
 
                 if self.inf.vm_master and vm.id == self.inf.vm_master.id:
                     node_line += ' ansible_connection=local'
@@ -959,7 +960,7 @@ class ConfManager(LoggerMixin, threading.Thread):
                 IM.InfrastructureList.InfrastructureList.save_data(self.inf.id)
 
                 self.inf.set_configured(True)
-            except:
+            except Exception:
                 self.log_exception("Error waiting the master VM to be running")
                 self.inf.set_configured(False)
         else:
@@ -1109,20 +1110,24 @@ class ConfManager(LoggerMixin, threading.Thread):
                     self.log_warn('VM: ' + str(vm.id) + " is in state Failed. Does not wait for SSH.")
                     return False, "VM Failure."
 
+                ssh = None
                 ip = vm.getPublicIP()
-                if ip is not None:
+                if ip is not None or (vm.getPrivateIP() and vm.getProxyHost()):
                     ssh = vm.get_ssh()
-                    self.log_info('SSH Connecting with: ' + ip + ' to the VM: ' + str(vm.id))
+                    msg = ""
+                    if vm.getProxyHost():
+                        msg = " (via %s)" % vm.getProxyHost().host
+                    self.log_info('SSH Connecting with: ' + ssh.host + msg + ' to the VM: ' + str(vm.id))
 
                     try:
                         connected = ssh.test_connectivity(5)
                     except AuthenticationException:
-                        self.log_warn("Error connecting with ip: " + ip + " incorrect credentials.")
+                        self.log_warn("Error connecting with ip: " + ssh.host + " incorrect credentials.")
                         auth_errors += 1
 
                         if auth_errors >= auth_error_retries:
                             self.log_error("Too many authentication errors")
-                            return False, "Error connecting with ip: " + ip + " incorrect credentials."
+                            return False, "Error connecting with ip: " + ssh.host + " incorrect credentials."
 
                     if connected:
                         self.log_info('Works!')
@@ -1195,7 +1200,7 @@ class ConfManager(LoggerMixin, threading.Thread):
 
                 if change_creds:
                     self.inf.vm_master.info.systems[0].updateNewCredentialValues()
-        except:
+        except Exception:
             self.log_exception("Error changing credentials to master VM.")
 
         return change_creds
@@ -1245,7 +1250,7 @@ class ConfManager(LoggerMixin, threading.Thread):
                 try:
                     # Try to assure that the are no ansible process running
                     self.ansible_process.teminate()
-                except:
+                except Exception:
                     self.log_exception('Problems terminating Ansible processes.')
                 self.ansible_process = None
                 return (False, "Timeout. Ansible process terminated.")
@@ -1261,7 +1266,7 @@ class ConfManager(LoggerMixin, threading.Thread):
             _, return_code, output = result.get(timeout=10, block=False)
             msg = output.getvalue()
             self.log_info('Results obtained')
-        except:
+        except Exception:
             self.log_exception('Error getting ansible results.')
             return_code = 1
             msg = "Error getting ansible results."
@@ -1270,7 +1275,7 @@ class ConfManager(LoggerMixin, threading.Thread):
             # Try to assure that the are no ansible process running
             self.log_debug("Terminating ansible process: %s." % self.ansible_process.pid)
             self.ansible_process.teminate()
-        except:
+        except Exception:
             self.log_exception('Problems terminating Ansible processes.')
         self.ansible_process = None
 
@@ -1326,8 +1331,35 @@ class ConfManager(LoggerMixin, threading.Thread):
         try:
             # Create the ansible inventory file
             with open(tmp_dir + "/inventory.cfg", 'w') as inv_out:
-                inv_out.write("%s  ansible_port=%d  ansible_ssh_port=%d" % (
-                    ssh.host, ssh.port, ssh.port))
+                ssh_args = ""
+                if ssh.proxy_host:
+                    # if user set the private key
+                    if ssh.proxy_host.private_key:
+                        priv_key_filename = "/var/tmp/%s_%s_%s.pem" % (ssh.proxy_host.username,
+                                                                       ssh.username,
+                                                                       ssh.host)
+                        # copy it to the proxy host to enable im_client to use it
+                        # ssh.proxy_host.sftp_put_content(ssh.proxy_host.private_key, priv_key_filename)
+                        # ssh.proxy_host.sftp_chmod(priv_key_filename, 0o600)
+                        # we must create it in the localhost
+                        with open(priv_key_filename, 'w') as f:
+                            f.write(ssh.proxy_host.private_key)
+                        os.chmod(priv_key_filename, 0o600)
+
+                        proxy_command = "ssh -W %%h:%%p -i %s -p %d %s %s@%s" % (priv_key_filename,
+                                                                                 ssh.proxy_host.port,
+                                                                                 "-o StrictHostKeyChecking=no",
+                                                                                 ssh.proxy_host.username,
+                                                                                 ssh.proxy_host.host)
+                    else:
+                        proxy_command = "sshpass -p %s ssh -W %%h:%%p -p %d %s %s@%s" % (ssh.proxy_host.password,
+                                                                                         ssh.proxy_host.port,
+                                                                                         "-o StrictHostKeyChecking=no",
+                                                                                         ssh.proxy_host.username,
+                                                                                         ssh.proxy_host.host)
+                    ssh_args = "ansible_ssh_extra_args=\" -oProxyCommand='%s'\"" % proxy_command
+                inv_out.write("%s  ansible_port=%d  ansible_ssh_port=%d %s" % (ssh.host, ssh.port,
+                                                                               ssh.port, ssh_args))
 
             shutil.copy(Config.CONTEXTUALIZATION_DIR + "/" +
                         ConfManager.MASTER_YAML, tmp_dir + "/" + ConfManager.MASTER_YAML)
@@ -1373,13 +1405,12 @@ class ConfManager(LoggerMixin, threading.Thread):
                     cmd = "echo '" + ssh.password + "' | " + cmd
                 (stdout, stderr, _) = ssh.execute(cmd, 120)
                 self.log_info(stdout + "\n" + stderr)
-            except:
+            except Exception:
                 self.log_exception("Error removing requiretty. Ignoring.")
 
             self.inf.add_cont_msg("Configure Ansible in the master VM.")
             self.log_info("Call Ansible to (re)configure in the master node")
-            (success, msg) = self.call_ansible(
-                tmp_dir, "inventory.cfg", ConfManager.MASTER_YAML, ssh)
+            (success, msg) = self.call_ansible(tmp_dir, "inventory.cfg", ConfManager.MASTER_YAML, ssh)
 
             if not success:
                 self.log_error("Error configuring master node: " + msg + "\n\n")

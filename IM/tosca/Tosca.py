@@ -213,7 +213,7 @@ class Tosca:
                                         # This net appears in two cloud, create another one
                                         new_net = network.createNetwork("private.%s" % src_host, False)
                                         # Move also the net params to the new one
-                                        for item in ["provider_id", "cidr"]:
+                                        for item in ["provider_id", "cidr", "create", "router", "outports"]:
                                             if net.getValue(item):
                                                 new_net.setValue(item, net.getValue(item))
                                                 net.delValue(item)
@@ -1550,7 +1550,10 @@ class Tosca:
                     yaml1[k] = Tosca._merge_yaml(yaml1[k], v)
         elif isinstance(yaml1, list) and isinstance(yaml2, (list, tuple)):
             for i, v in enumerate(yaml2):
-                yaml1[i] = Tosca._merge_yaml(yaml1[i], v)
+                if i < len(yaml1):
+                    yaml1[i] = Tosca._merge_yaml(yaml1[i], v)
+                else:
+                    yaml1.append(v)
         else:
             yaml1 = yaml2
 

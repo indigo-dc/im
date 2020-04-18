@@ -16,6 +16,7 @@
 
 import time
 import requests
+from netaddr import IPNetwork, spanning_cidr
 
 try:
     import boto.ec2
@@ -375,9 +376,8 @@ class EC2CloudConnector(CloudConnector):
                 res.append(sg.id)
 
                 try:
-                    # open always SSH port on public nets
-                    if network.isPublic():
-                        sg.authorize('tcp', 22, 22, '0.0.0.0/0')
+                    # open always SSH port
+                    sg.authorize('tcp', 22, 22, '0.0.0.0/0')
                     # open all the ports for the VMs in the security group
                     sg.authorize('tcp', 0, 65535, src_group=sg)
                     sg.authorize('udp', 0, 65535, src_group=sg)
@@ -447,12 +447,37 @@ class EC2CloudConnector(CloudConnector):
 
         return provider_id
 
+    def get_vpc_cidr(self, radl, conn, inf):
+        """
+        Get a common CIDR in all the RADL nets
+        """
+        nets = []
+        for i, net in enumerate(radl.networks):
+            provider_id = net.getValue('provider_id')
+            if net.getValue('create') == 'yes' and not net.isPublic() and not provider_id:
+                net_cidr = self.get_free_cidr(net.getValue('cidr'),
+                                              [subnet.cidr_block for subnet in conn.get_all_subnets()] + nets,
+                                              inf)
+                nets.append(net_cidr)
+
+        if len(nets) == 0:  # there is no CIDR return the default one
+            return "10.0.0.0/16"
+        elif len(nets) == 1:  # there is only one, return it
+            return nets[0]
+        else:  # there are more, get the common CIDR
+            return str(spanning_cidr(nets))
+
     def create_networks(self, conn, radl, inf):
         """
         Create the requested subnets and VPC
         """
         try:
-            vpc_cird = self.get_nets_common_cird(radl)
+            common_cird = IPNetwork(self.get_vpc_cidr(radl, conn, inf))
+            # EC2 does not accept less that /16 CIDRs
+            if common_cird.prefixlen < 16:
+                vpc_cird = "%s/16" % str(common_cird.ip)
+            else:
+                vpc_cird = str(common_cird)
             vpc_id = None
             for i, net in enumerate(radl.networks):
                 provider_id = net.getValue('provider_id')
@@ -460,6 +485,7 @@ class EC2CloudConnector(CloudConnector):
                     net_cidr = self.get_free_cidr(net.getValue('cidr'),
                                                   [subnet.cidr_block for subnet in conn.get_all_subnets()],
                                                   inf)
+                    net.delValue('cidr')
 
                     # First create the VPC
                     if vpc_id is None:
@@ -495,6 +521,7 @@ class EC2CloudConnector(CloudConnector):
                     if subnets:
                         subnet = subnets[0]
                         self.log_debug("Subnet %s exists. Do not create." % net.id)
+                        net.setValue('cidr', subnet.cidr_block)
                     else:
                         self.log_info("Create subnet for net %s." % net.id)
                         subnet = conn.create_subnet(vpc_id, net_cidr)
@@ -624,6 +651,10 @@ class EC2CloudConnector(CloudConnector):
 
         vpc, subnet = self.get_networks(conn, radl)
 
+        add_public_ip = True
+        if not radl.hasPublicNet(system.name) and system.getValue("ec2.associate_public_ip_address") == "no":
+            add_public_ip = False
+
         sg_ids = self.create_security_groups(conn, inf, radl, vpc)
 
         public_key = system.getValue("disk.0.os.credentials.public_key")
@@ -722,12 +753,15 @@ class EC2CloudConnector(CloudConnector):
                     err_msg += " an ondemand instance "
                     err_msg += " of type: %s " % instance_type.name
 
-                    # Check if the user has specified the net provider
-                    # id
-                    reservation = image.run(min_count=1, max_count=1, key_name=keypair_name,
-                                            instance_type=instance_type.name, security_group_ids=sg_ids,
-                                            placement=placement, block_device_map=bdm, subnet_id=subnet,
-                                            user_data=user_data)
+                    interface = boto.ec2.networkinterface.NetworkInterfaceSpecification(
+                        subnet_id=subnet,
+                        groups=sg_ids,
+                        associate_public_ip_address=add_public_ip)
+                    interfaces = boto.ec2.networkinterface.NetworkInterfaceCollection(interface)
+
+                    reservation = conn.run_instances(image.id, min_count=1, max_count=1, key_name=keypair_name,
+                                                     instance_type=instance_type.name, network_interfaces=interfaces,
+                                                     placement=placement, block_device_map=bdm, user_data=user_data)
 
                     if len(reservation.instances) == 1:
                         time.sleep(1)
@@ -762,7 +796,7 @@ class EC2CloudConnector(CloudConnector):
                     self.log_info("Remove the SG: %s" % sgid)
                     try:
                         conn.delete_security_group(group_id=sgid)
-                    except:
+                    except Exception:
                         self.log_exception("Error deleting SG.")
 
         return res
@@ -1072,8 +1106,11 @@ class EC2CloudConnector(CloudConnector):
                     vrouter = None
                     for v in vm.inf.vm_list:
                         if v.info.systems[0].name == system_router:
-                            vrouter = v.id.split(";")[1]
-                            break
+                            if v.id is None or len(v.id.split(";")) < 2:
+                                self.log_warn("Unexpected value in VRouter instance (%s): %s" % (system_router, v.id))
+                            else:
+                                vrouter = v.id.split(";")[1]
+                                break
                     if not vrouter:
                         self.log_error("No VRouter instance found with name %s" % system_router)
                         success = False
@@ -1089,6 +1126,8 @@ class EC2CloudConnector(CloudConnector):
 
                     self.log_info("Adding route %s to instance ID: %s." % (router_cidr, vrouter))
                     conn.create_route(route_table_id, router_cidr, instance_id=vrouter)
+                    self.log_debug("Disabling sourceDestCheck to instance ID: %s." % vrouter)
+                    conn.modify_instance_attribute(vrouter, attribute='sourceDestCheck', value=False)
 
                     # once set, delete it to not set it again
                     network.delValue('router')

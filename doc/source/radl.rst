@@ -212,6 +212,16 @@ The supported features are:
    route all the traffic through the front node.
    The default value is ``''``.
 
+``proxy_host = <string>``
+   The URI of a node to use it as an SSH proxy to connect with nodes in private networks.
+   Format of the URI: 'username:password@servername:port'.
+   The default value is ``''``.
+
+``proxy_key = <string>``
+   Set the private key to connect with the proxy host. If it is specified it overrides the
+   password set in the ``proxy_host`` url.
+   The default value is ``''``.
+
 System Features
 ---------------
 
