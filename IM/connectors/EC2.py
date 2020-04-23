@@ -457,7 +457,7 @@ class EC2CloudConnector(CloudConnector):
             if net.getValue('create') == 'yes' and not net.isPublic() and not provider_id:
                 net_cidr = self.get_free_cidr(net.getValue('cidr'),
                                               [subnet.cidr_block for subnet in conn.get_all_subnets()] + nets,
-                                              inf)
+                                              inf, 127)
                 nets.append(net_cidr)
 
         if len(nets) == 0:  # there is no CIDR return the default one
@@ -484,7 +484,7 @@ class EC2CloudConnector(CloudConnector):
                 if net.getValue('create') == 'yes' and not net.isPublic() and not provider_id:
                     net_cidr = self.get_free_cidr(net.getValue('cidr'),
                                                   [subnet.cidr_block for subnet in conn.get_all_subnets()],
-                                                  inf)
+                                                  inf, 127)
                     net.delValue('cidr')
 
                     # First create the VPC
@@ -1311,7 +1311,7 @@ class EC2CloudConnector(CloudConnector):
                 self.log_info("Spot instance request " + str(sir.id) + " deleted")
                 break
 
-    def delete_networks(self, conn, vm, timeout=120):
+    def delete_networks(self, conn, vm, timeout=240):
         """
         Delete the created networks
         """
@@ -1331,22 +1331,23 @@ class EC2CloudConnector(CloudConnector):
                     time.sleep(5)
 
             if not deleted:
-                self.log_error("Timeout (%s) removing the volume %s" % (timeout, subnet.id))
+                self.log_error("Timeout (%s) deleting the subnet %s" % (timeout, subnet.id))
 
         vpc_id = None
         for vpc in conn.get_all_vpcs(filters={"tag:IM-INFRA-ID": vm.inf.id}):
-            self.log_info("Deleting vpc: %s" % vpc.id)
             vpc_id = vpc.id
         ig_id = None
         for ig in conn.get_all_internet_gateways(filters={"tag:IM-INFRA-ID": vm.inf.id}):
-            self.log_info("Deleting Internet Gateway: %s" % ig.id)
             ig_id = ig.id
 
         if ig_id and vpc_id:
+            self.log_info("Detacching Internet Gateway: %s from VPC: %s" % (ig_id, vpc_id))
             conn.detach_internet_gateway(ig_id, vpc_id)
         if ig_id:
+            self.log_info("Deleting Internet Gateway: %s" % ig.id)
             conn.delete_internet_gateway(ig_id)
         if vpc_id:
+            self.log_info("Deleting vpc: %s" % vpc.id)
             conn.delete_vpc(vpc_id)
 
     def finalize(self, vm, last, auth_data):
