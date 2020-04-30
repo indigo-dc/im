@@ -26,7 +26,7 @@ apache-libcloud
 backports.ssl_match_hostname
 -egit+https://github.com/indigo-dc/tosca-parser@master#egg=tosca-parser
 bottle
-suds
+suds-py3
 msrest
 msrestazure
 azure-common
@@ -37,7 +37,7 @@ azure-mgmt-resource
 azure-mgmt-dns
 azure-storage
 pywinrm
-MySQL-python
+mysqlclient
 pyVmomi
 pymongo
 defusedxml'''
